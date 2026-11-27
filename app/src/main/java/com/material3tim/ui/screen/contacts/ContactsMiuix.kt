@@ -111,6 +111,7 @@ fun ContactsPagerMiuix(
     searchStatus: SearchStatus,
     onSearchStatusChange: (SearchStatus) -> Unit,
     bottomInnerPadding: Dp,
+    onAddFriend: () -> Unit,
 ) {
     val enableBlur = LocalEnableBlur.current
     val density = LocalDensity.current
@@ -125,9 +126,6 @@ fun ContactsPagerMiuix(
     // Phase 2b：页面级 Glass 采样 backdrop；关闭模糊/无 runtime shader 时 null → 纯色回退。
     val backdrop = rememberPageBackdrop(enableBlur)
     val lazyListState = rememberLazyListState()
-    val onFeatureComingSoon: () -> Unit = {
-        Toast.makeText(context, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
-    }
 
     CompositionLocalProvider(LocalPageBackdrop provides backdrop) {
     Scaffold(
@@ -139,7 +137,7 @@ fun ContactsPagerMiuix(
                 actions = {
                     // 圆形 Glass 按钮（玻璃模式）/ 普通 IconButton（纯色回退）。
                     HyperTopBarIconButton(
-                        onClick = onFeatureComingSoon,
+                        onClick = onAddFriend,
                         contentDescription = stringResource(R.string.contacts_add_friend),
                         icon = MiuixIcons.AddCircle,
                     )

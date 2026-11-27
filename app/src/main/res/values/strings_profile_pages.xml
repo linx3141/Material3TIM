@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 「我的」页子页面（编辑资料 / 我的收藏 / 我的文件）补充文案。公共文案见 values/strings.xml。 -->
 <resources>
+    <string name="profile_native_failed">当前 TIM 版本无法打开此页面，请检查版本后重试。</string>
+    <string name="profile_collect_failed">无法打开收藏，请确认消息内容已下载后重试。</string>
+    <string name="profile_qzone">QQ空间</string>
+    <string name="contact_qzone">QQ空间</string>
+    <string name="qzone_open_failed">无法打开 QQ 空间</string>
+
     <!-- ========== 编辑资料页 ========== -->
     <string name="edit_profile_avatar_hint">点击更换头像</string>
     <string name="edit_profile_birthday_value">2000年1月1日</string>

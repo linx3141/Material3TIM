@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigationevent.NavigationEventInfo
@@ -179,6 +180,15 @@ fun M3TimRoot(
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
+        // 所有进入聊天的入口汇合在同一个路由；回前台仍在该聊天时也清理通知。
+        val visibleChatId = (navigator.current() as? Route.ChatDetail)?.chatId
+        if (visibleChatId != null) {
+            LifecycleResumeEffect(visibleChatId) {
+                com.material3tim.data.source.AppDataSources.chatSettingSource
+                    ?.dismissChatNotification(visibleChatId)
+                onPauseOrDispose { }
+            }
+        }
         val context = LocalContext.current
         val uriHandler = LocalUriHandler.current
         val systemDensity = LocalDensity.current
@@ -298,13 +308,9 @@ fun M3TimRoot(
                         entry<Route.Forward>(swipeDismiss = swipeDismiss) { key ->
                             ForwardScreen(key.srcChatId, key.msgIds, key.preview)
                         }
-                        entry<Route.ChatImage>(swipeDismiss = swipeDismiss) { key ->
-                            ChatImageScreen(
-                                imagePath = key.imagePath,
-                                chatId = key.chatId,
-                                msgId = key.msgId,
-                                elementId = key.elementId,
-                            )
+                        // 图片查看器的横划留给翻页；系统返回、顶部返回按钮仍可退出。
+                        entry<Route.ChatImage>(swipeDismiss = NavSwipeDirection.None) { key ->
+                            ChatImageScreen(key)
                         }
                         entry<Route.ChatVideo>(swipeDismiss = swipeDismiss) { key ->
                             ChatVideoScreen(

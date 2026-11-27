@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 跟随系统 -->
+    <string name="settings_follow_system">跟随系统取色</string>
+    <string name="settings_follow_system_summary">直接使用系统 Material You 调色板；选自定义颜色会自动关闭</string>
+
     <!-- ========== 主题设置 / ColorPalette 页（Material3Tim 自有字符串） ========== -->
     <string name="settings_key_color">强调色</string>
     <string name="settings_key_color_default">默认</string>

@@ -17,6 +17,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -106,6 +108,70 @@ fun SettingPagerMaterial(
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                     contentDescription = null,
+                                )
+                            },
+                        )
+                    },
+                    {
+                        SegmentedListItem(
+                            onClick = actions.onSyncTelegram,
+                            headlineContent = { Text(stringResource(R.string.tg_settings)) },
+                            supportingContent = { Text(stringResource(R.string.tg_settings_summary)) },
+                            trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+                        )
+                    },
+                    {
+                        SegmentedListItem(
+                            onClick = actions.onOpenTimSettings,
+                            headlineContent = {
+                                Text(stringResource(id = R.string.settings_open_tim_settings))
+                            },
+                            supportingContent = {
+                                Text(
+                                    stringResource(
+                                        id = R.string.settings_open_tim_settings_summary,
+                                    ),
+                                )
+                            },
+                            leadingContent = {
+                                Icon(
+                                    imageVector = Icons.Filled.Settings,
+                                    contentDescription = stringResource(
+                                        id = R.string.settings_open_tim_settings,
+                                    ),
+                                )
+                            },
+                            trailingContent = {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                )
+                            },
+                        )
+                    },
+                    {
+                        SegmentedListItem(
+                            onClick = actions.onReturnToOriginalTim,
+                            headlineContent = {
+                                Text(
+                                    stringResource(
+                                        id = R.string.settings_return_original_tim,
+                                    ),
+                                )
+                            },
+                            supportingContent = {
+                                Text(
+                                    stringResource(
+                                        id = R.string.settings_return_original_tim_summary,
+                                    ),
+                                )
+                            },
+                            leadingContent = {
+                                Icon(
+                                    imageVector = Icons.Filled.RestartAlt,
+                                    contentDescription = stringResource(
+                                        id = R.string.settings_return_original_tim,
+                                    ),
                                 )
                             },
                         )

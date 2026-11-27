@@ -81,6 +81,12 @@ android {
     defaultConfig {
         minSdk = androidMinSdkVersion
         targetSdk = androidTargetSdkVersion
+        // 开发者可在本机 Gradle 属性中配置 my.telegram.org 的应用凭据。
+        val telegramId = providers.gradleProperty("TELEGRAM_API_ID").orNull?.toIntOrNull() ?: 0
+        val telegramHash = providers.gradleProperty("TELEGRAM_API_HASH").orNull.orEmpty()
+        require(telegramHash.isEmpty() || telegramHash.matches(Regex("[a-fA-F0-9]{32}")))
+        buildConfigField("int", "TELEGRAM_API_ID", telegramId.toString())
+        buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramHash\"")
         versionCode = 1
         versionName = "0.1.0"
         applicationId = "io.github.linx3141.material3tim"
@@ -128,6 +134,12 @@ dependencies {
 
     implementation(libs.androidx.navigationevent.compose)
 
+    // 扫一扫：应用内 CameraX 预览 + ZXing 解码（不再拉起系统相机）
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
 
@@ -144,6 +156,11 @@ dependencies {
     implementation(libs.material.kolor.material3)
     implementation("androidx.browser:browser:1.8.0")
     implementation("com.google.zxing:core:3.5.3")
+    implementation("io.github.tdlib-android:core:0.1.1")
+    implementation("com.airbnb.android:lottie:6.6.7")
+    compileOnly("com.google.code.findbugs:jsr305:3.0.2") // Okio 的可空注解，供 R8 解析。
+    implementation("com.squareup:gifencoder:0.10.1")
+    testImplementation("junit:junit:4.13.2")
 }
 
 kotlin {

@@ -2,14 +2,19 @@ package com.material3tim.xposed
 
 import android.app.Activity
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.util.Log
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.unit.IntSize
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.activity.setViewTreeOnBackPressedDispatcherOwner
@@ -20,6 +25,7 @@ import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.material3tim.AppEnvironment
 import com.material3tim.ui.M3TimRoot
+import com.material3tim.ui.util.LocalHostWindowSize
 import com.material3tim.ui.viewmodel.MainActivityViewModel
 import java.util.Collections
 import java.util.WeakHashMap
@@ -27,7 +33,7 @@ import java.util.WeakHashMap
 /**
  * 把自写的 Compose UI 挂到 TIM 的 Activity 上（第二步：接管整个界面）。
  *
- * 实现方式：在 `decorView` 最上层放一个全屏 [ComposeView]（compose 接管视觉与交互），
+ * 实现方式：在 `decorView` 最上层放一个全屏 Compose 覆盖层（compose 接管视觉与交互），
  * 而不是把 TIM 的 content 清空 —— TIM 的主框架里大量 `findViewById(...).addView(...)`
  * 之类的强假设，清空 content 很容易让宿主 NPE 崩溃；覆盖层方案对宿主零侵入。
  * TIM 自己的 view 树留在下面继续运转（登录态、消息服务都正常）。
@@ -38,9 +44,39 @@ internal object UiHost {
 
     private const val TAG = "Material3Tim"
     private const val HOST_PREFS = "material3tim_host"
+    private const val KEY_MATERIAL_UI_ENABLED = "material3tim_enabled"
 
-    private val hosted: MutableMap<Activity, ComposeView> =
-        Collections.synchronizedMap(WeakHashMap<Activity, ComposeView>())
+    private val hosted: MutableMap<Activity, HostComposeOverlay> =
+        Collections.synchronizedMap(WeakHashMap<Activity, HostComposeOverlay>())
+
+    private class HostComposeOverlay(
+        private val activity: Activity,
+        moduleContext: Context,
+    ) : FrameLayout(moduleContext) {
+        val windowSize = mutableStateOf(IntSize.Zero)
+
+        fun refreshConfiguration() {
+            val host = activity.resources
+            if (resources.configuration != host.configuration ||
+                resources.displayMetrics.densityDpi != host.displayMetrics.densityDpi
+            ) {
+                dispatchConfigurationChanged(host.configuration)
+            }
+        }
+
+        override fun dispatchConfigurationChanged(newConfig: Configuration) {
+            // 独立 AssetManager 的 Resources 不随 Activity 更新。先同步，再让 Compose 子 View
+            // 读取新配置；保留模块资源隔离，不重建 Composition / 返回栈。
+            @Suppress("DEPRECATION")
+            resources.updateConfiguration(newConfig, activity.resources.displayMetrics)
+            super.dispatchConfigurationChanged(newConfig)
+        }
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            windowSize.value = IntSize(w, h)
+        }
+    }
 
     /** 已注册的预测性返回回调（每 Activity 一个）。 */
     private val backCallbacks: MutableMap<Activity, Any> =
@@ -54,9 +90,47 @@ internal object UiHost {
     private val immersiveReapplyAt: MutableMap<Activity, Long> =
         Collections.synchronizedMap(WeakHashMap<Activity, Long>())
 
+    /** 是否启用 Material3TIM 界面（关闭后显示 TIM 原生界面）。 */
+    fun isMaterialUiEnabled(context: Context): Boolean =
+        context.getSharedPreferences(HOST_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_MATERIAL_UI_ENABLED, true)
+
+    /** 设置是否启用 Material3TIM 界面；新值在 TIM 进程重启后生效。 */
+    fun setMaterialUiEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(HOST_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_MATERIAL_UI_ENABLED, enabled)
+            .apply()
+        Log.i(TAG, "material3tim_enabled=$enabled")
+    }
+
+    /**
+     * 重启 TIM 进程，让“启用/停用 Material3TIM 界面”生效。
+     * 仅在宿主 TIM 进程里执行；独立 App 只提示，不自杀。
+     */
+    fun restartTim(context: Context) {
+        if (context.packageName != "com.tencent.tim") return
+        val activity = findActivity(context)
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            runCatching { activity?.finishAffinity() }
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }, 350L)
+    }
+
+    private fun findActivity(context: Context?): Activity? {
+        var current = context
+        var guard = 0
+        while (current != null && guard++ < 8) {
+            if (current is Activity) return current
+            current = (current as? android.content.ContextWrapper)?.baseContext
+        }
+        return null
+    }
+
     /** 供 hook 调用：保证目标 Activity 上已经挂上我们的 UI。 */
     fun ensureHosted(module: MainModule, activity: Activity) {
         if (activity.isFinishing) return
+        if (!isMaterialUiEnabled(activity)) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed) return
         try {
             val existing = hosted[activity]
@@ -64,6 +138,7 @@ internal object UiHost {
                 // 关键：从后台回到前台时把 Compose 的 lifecycle 恢复成 RESUMED。
                 // 否则 Compose 的 WindowRecomposer 帧时钟一直暂停：点击能被收到但界面
                 // 不重组、列表 fling 没有惯性、预测性返回动画卡在半路。
+                existing.refreshConfiguration()
                 HostOwners.get(activity)?.onResume()
                 if (existing.parent == null) attachToDecor(activity, existing)
                 return
@@ -77,18 +152,19 @@ internal object UiHost {
     private fun install(module: MainModule, activity: Activity) {
         val moduleResources = ModuleResources.createModuleResources(module, activity)
         if (moduleResources == null) {
-            // 兜底：把模块资源注入宿主 Activity 的 Resources。
-            val injected = ModuleResources.injectIntoHostResources(module, activity, activity.resources)
-            if (!injected) {
-                // 覆盖安装后当前进程注入的是已删除的旧 APK：自动重启 TIM 一次；
-                // 若短时间内已重启过（避免循环），就不要用宿主资源表挂载 UI（否则文案全变 false），
-                // 保留 TIM 原生界面，等用户下次冷启动即可恢复。
-                if (ModuleResources.tryRecoverByRestart(activity)) return
-                Log.e(TAG, "module resources unavailable, skip hosting ui to avoid wrong strings")
-                return
-            }
+            // 注意：**不要**退化成把模块 APK 注入宿主 Activity 的 Resources。
+            // QAuxiliary 也用 `Resources.addLoaders` 注入自己的 APK，两个 0x7f
+            // 资源表挂在同一个 Resources 上会互相遮蔽（QAuxv 文案串号/自检失败）。
+            // 覆盖安装后当前进程注入的是已删除的旧 APK 时，重启 TIM 一次即可
+            // 拿到新路径；仍然失败就保留 TIM 原生界面，等下次冷启动恢复。
+            if (ModuleResources.tryRecoverByRestart(activity)) return
+            Log.e(
+                TAG,
+                "module resources unavailable, skip hosting ui (no host resource injection)",
+            )
+            return
         }
-        val resources = moduleResources ?: activity.resources
+        val resources = moduleResources
         val remotePrefs = runCatching { module.getRemotePreferences("settings") }.getOrNull()
         val settingsPrefs = HostSettingsPrefs(
             remote = remotePrefs,
@@ -100,6 +176,7 @@ internal object UiHost {
         AppEnvironment.init(moduleContext)
         // 第 3 步：把真实 TIM 数据接入 UI（会话列表 → 之后的消息/联系人/发送）。
         TimBridge.install()
+        com.material3tim.data.source.AppDataSources.personalLibrary = TimPersonalLibrary(activity)
         com.material3tim.data.source.AppDataSources.chatSource = TimChatSource()
         com.material3tim.data.source.AppDataSources.messageSource = TimMessageSource()
         com.material3tim.data.source.AppDataSources.contactSource = TimContactSource()
@@ -131,14 +208,19 @@ internal object UiHost {
         ensureViewTreeOwners(activity, owners)
         registerPredictiveBack(activity, owners)
 
+        val overlay = HostComposeOverlay(activity, moduleContext)
         val composeView = ComposeView(moduleContext).apply {
             setContent {
-                HostRoot(activity)
+                CompositionLocalProvider(LocalHostWindowSize provides overlay.windowSize.value) {
+                    HostRoot(activity)
+                }
             }
         }
-        attachToDecor(activity, composeView)
-        hosted[activity] = composeView
-        Log.i(TAG, "hosted compose ui on ${activity.javaClass.name}, moduleRes=${moduleResources != null}")
+        val matchParent = ViewGroup.LayoutParams.MATCH_PARENT
+        overlay.addView(composeView, FrameLayout.LayoutParams(matchParent, matchParent))
+        attachToDecor(activity, overlay)
+        hosted[activity] = overlay
+        Log.i(TAG, "hosted compose ui on ${activity.javaClass.name}")
     }
 
     @Composable
@@ -261,6 +343,7 @@ internal object UiHost {
     fun onActivityResumed(activity: Activity) {
         val view = hosted[activity] ?: return
         configureWindow(activity)
+        view.refreshConfiguration()
         HostOwners.get(activity)?.onResume()
         if (view.parent == null) attachToDecor(activity, view)
     }
@@ -276,7 +359,7 @@ internal object UiHost {
         HostOwners.remove(activity)
     }
 
-    private fun attachToDecor(activity: Activity, view: ComposeView) {
+    private fun attachToDecor(activity: Activity, view: HostComposeOverlay) {
         val decor = activity.window?.decorView as? ViewGroup ?: return
         if (view.parent === decor) return
         if (view.parent is ViewGroup) (view.parent as ViewGroup).removeView(view)

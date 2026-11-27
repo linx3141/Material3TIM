@@ -17,6 +17,8 @@ import com.material3tim.data.model.FriendRequestState
 import com.material3tim.data.repository.ContentRepository
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.ui.LocalUiMode
+import com.material3tim.ui.navigation3.LocalNavigator
+import com.material3tim.ui.navigation3.Route
 import com.material3tim.ui.UiMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -31,6 +33,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun NewFriendsScreen() {
     val context = LocalContext.current
+    val navigator = LocalNavigator.current
     val friendManageSource = AppDataSources.friendManageSource
     val isHost = friendManageSource != null
     val scope = rememberCoroutineScope()
@@ -106,6 +109,7 @@ fun NewFriendsScreen() {
             onRetry = { refreshTick += 1 },
             onAccept = { onRespond(it, true) },
             onReject = { onRespond(it, false) },
+            onAddFriend = { navigator.push(Route.AddFriend) },
         )
 
         UiMode.Miuix -> NewFriendsMiuix(
@@ -115,6 +119,7 @@ fun NewFriendsScreen() {
             onRetry = { refreshTick += 1 },
             onAccept = { onRespond(it, true) },
             onReject = { onRespond(it, false) },
+            onAddFriend = { navigator.push(Route.AddFriend) },
         )
     }
 }

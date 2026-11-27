@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.material3tim.R
@@ -58,6 +59,7 @@ fun ContactDetailScreen(
     uin: String = "",
 ) {
     val navigator = LocalNavigator.current
+    val context = LocalContext.current
     val liveSource = AppDataSources.contactSource
     val isChatProfile = chatId.isNotBlank() && (uid.isNotBlank() || uin.isNotBlank())
     var profile by remember(contactId, chatId, uid, uin) { mutableStateOf<UserProfile?>(null) }
@@ -239,6 +241,20 @@ fun ContactDetailScreen(
         )
     }
     val onProfileRefresh: () -> Unit = { refreshTick += 1 }
+    val onOpenQZone: () -> Unit = {
+        // 优先用群成员/入口传入的 QQ 号；timId 在拿不到 uin 时会退化成 uid，
+        // 拿它去开空间会变成错误的人（甚至空号）。只接受纯数字 QQ 号。
+        val qzoneQq = sequenceOf(
+            targetMember?.uin,
+            uin,
+            profile?.timId,
+            pageDetail.timId,
+        ).filterNotNull().firstOrNull { candidate ->
+            // QQ 号必须为正整数；"0" / uid 字符串都不能拿去开空间。
+            (candidate.toLongOrNull() ?: 0L) > 0L
+        }.orEmpty()
+        com.material3tim.ui.util.openQZone(context, qzoneQq)
+    }
     // 仅「聊天头像入口且资料还没拿到」时显示局部 loading/失败态；拿到后（甚至刷新中）继续显示旧数据。
     val showProfilePlaceholders = isChatProfile && profile == null
     val profileLoading = showProfilePlaceholders && loading
@@ -255,6 +271,7 @@ fun ContactDetailScreen(
             isProfileLoadFailed = profileLoadFailed,
             onRetryProfile = { refreshTick += 1 },
             onAddFriend = onAddFriend,
+            onOpenQZone = onOpenQZone,
             manageRole = myRole,
             manageTarget = targetMember,
             manageChatId = groupChatId,
@@ -277,6 +294,7 @@ fun ContactDetailScreen(
             isProfileLoadFailed = profileLoadFailed,
             onRetryProfile = { refreshTick += 1 },
             onAddFriend = onAddFriend,
+            onOpenQZone = onOpenQZone,
             manageRole = myRole,
             manageTarget = targetMember,
             manageChatId = groupChatId,

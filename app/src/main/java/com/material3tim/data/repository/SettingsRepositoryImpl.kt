@@ -24,12 +24,18 @@ class SettingsRepositoryImpl : SettingsRepository {
         set(value) = prefs.edit { putInt("color_mode", value) }
 
     override var miuixMonet: Boolean
-        get() = prefs.getBoolean("miuix_monet", false)
+        // 默认开启：Miuix 界面默认使用系统莫奈取色，跟随系统壁纸/主题。
+        get() = prefs.getBoolean("miuix_monet", true)
         set(value) = prefs.edit { putBoolean("miuix_monet", value) }
 
     override var keyColor: Int
         get() = prefs.getInt("key_color", 0)
         set(value) = prefs.edit { putInt("key_color", value) }
+
+    override var followSystem: Boolean
+        // 默认跟随系统；用户选自定义颜色或关闭开关后走 keyColor/style 生成。
+        get() = prefs.getBoolean("follow_system", true)
+        set(value) = prefs.edit { putBoolean("follow_system", value) }
 
     override var colorStyle: String
         get() = prefs.getString("color_style", PaletteStyle.TonalSpot.name) ?: PaletteStyle.TonalSpot.name
@@ -105,6 +111,7 @@ class SettingsRepositoryImpl : SettingsRepository {
 val UI_SETTINGS_KEYS = setOf(
     "color_mode",
     "key_color",
+    "follow_system",
     "color_style",
     "color_spec",
     "page_scale",

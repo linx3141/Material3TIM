@@ -188,6 +188,7 @@ fun ColorPaletteScreenMiuix(
                             keyColor = uiState.keyColor,
                             isDark = isDark,
                             miuixMonet = uiState.miuixMonet,
+                            followSystem = uiState.followSystem,
                             enableFloatingBottomBar = uiState.enableFloatingBottomBar,
                             enableFloatingBottomBarBlur = uiState.enableFloatingBottomBarBlur,
                             paletteStyle = state.currentPaletteStyle,
@@ -254,6 +255,23 @@ fun ColorPaletteScreenMiuix(
                                 }
                             )
 
+                            SwitchPreference(
+                                title = stringResource(id = R.string.settings_follow_system),
+                                summary = stringResource(id = R.string.settings_follow_system_summary),
+                                startAction = {
+                                    Icon(
+                                        Icons.Rounded.Wallpaper,
+                                        modifier = Modifier.padding(end = 6.dp),
+                                        contentDescription = stringResource(id = R.string.settings_follow_system),
+                                        tint = colorScheme.onBackground
+                                    )
+                                },
+                                checked = uiState.followSystem,
+                                onCheckedChange = {
+                                    actions.onSetFollowSystem(it)
+                                }
+                            )
+
                             AnimatedVisibility(
                                 visible = uiState.miuixMonet
                             ) {
@@ -288,7 +306,7 @@ fun ColorPaletteScreenMiuix(
                                                 tint = colorScheme.onBackground
                                             )
                                         },
-                                        selectedIndex = colorValues.indexOf(uiState.keyColor).takeIf { it >= 0 } ?: 0,
+                                        selectedIndex = if (uiState.followSystem) 0 else (colorValues.indexOf(uiState.keyColor).takeIf { it >= 0 } ?: 0),
                                         backdrop = backdrop,
                                         onSelectedIndexChange = { index ->
                                             actions.onSetKeyColor(colorValues[index])
@@ -661,6 +679,7 @@ private fun ThemePreviewCardMiuix(
     keyColor: Int,
     isDark: Boolean,
     miuixMonet: Boolean,
+    followSystem: Boolean = false,
     enableFloatingBottomBar: Boolean = false,
     enableFloatingBottomBarBlur: Boolean = false,
     paletteStyle: PaletteStyle = PaletteStyle.TonalSpot,
@@ -678,23 +697,35 @@ private fun ThemePreviewCardMiuix(
     // 预览与真实主题一致：SPEC 2026 强制 CMF，CMF 强制 SPEC 2026。
     val effectiveStyle = previewSpec.effectiveStyle(previewStyle)
     val effectiveSpec = previewSpec.effectiveFor(effectiveStyle)
-    val dynamicCs = com.material3tim.ui.theme.rememberM3TimDynamicColorScheme(
-        seedColor = seedColor,
-        isDark = isDark,
-        style = effectiveStyle,
-        specVersion = effectiveSpec,
-    )
+    val dynamicCs = if (followSystem) {
+        com.material3tim.ui.theme.rememberM3TimColorScheme(
+            seedColor = Color.Unspecified,
+            isDark = isDark,
+            isAmoled = false,
+            paletteStyle = PaletteStyle.TonalSpot,
+            colorSpec = ColorSpecVersion.SPEC_2025,
+            followSystem = true,
+        )
+    } else {
+        com.material3tim.ui.theme.rememberM3TimDynamicColorScheme(
+            seedColor = seedColor,
+            isDark = isDark,
+            style = effectiveStyle,
+            specVersion = effectiveSpec,
+        )
+    }
+    val useDynamic = miuixMonet || followSystem
 
-    val bgColor = if (miuixMonet) dynamicCs.background else colorScheme.surface
-    val textColor = if (miuixMonet) dynamicCs.onSurface else colorScheme.onBackground
+    val bgColor = if (useDynamic) dynamicCs.background else colorScheme.surface
+    val textColor = if (useDynamic) dynamicCs.onSurface else colorScheme.onBackground
     val accentCardColor = when {
-        miuixMonet -> dynamicCs.secondaryContainer
+        useDynamic -> dynamicCs.secondaryContainer
         isDark -> Color(0xFF1A3825)
         else -> Color(0xFFDFFAE4)
     }
-    val cardColor = if (miuixMonet) dynamicCs.surfaceContainerHighest else colorScheme.surfaceVariant
-    val navBarColor = if (miuixMonet) dynamicCs.surfaceContainer else colorScheme.surface
-    val iconColor = if (miuixMonet) dynamicCs.primary else colorScheme.primary
+    val cardColor = if (useDynamic) dynamicCs.surfaceContainerHighest else colorScheme.surfaceVariant
+    val navBarColor = if (useDynamic) dynamicCs.surfaceContainer else colorScheme.surface
+    val iconColor = if (useDynamic) dynamicCs.primary else colorScheme.primary
     val navSelectedColor = colorScheme.onSurfaceContainer
     val navUnselectedColor = colorScheme.onSurfaceContainer.copy(alpha = 0.5f)
 

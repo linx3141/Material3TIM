@@ -31,6 +31,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
@@ -159,6 +161,51 @@ fun SettingPagerMiuix(
                                     )
                                 },
                                 onClick = actions.onOpenTheme,
+                            )
+                        },
+                        CardItem("telegramStickers") {
+                            ArrowPreference(
+                                title = stringResource(R.string.tg_settings),
+                                summary = stringResource(R.string.tg_settings_summary),
+                                onClick = actions.onSyncTelegram,
+                            )
+                        },
+                        CardItem("timSettings") {
+                            ArrowPreference(
+                                title = stringResource(id = R.string.settings_open_tim_settings),
+                                summary = stringResource(
+                                    id = R.string.settings_open_tim_settings_summary,
+                                ),
+                                startAction = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Settings,
+                                        contentDescription = stringResource(
+                                            id = R.string.settings_open_tim_settings,
+                                        ),
+                                        modifier = Modifier.padding(end = 6.dp),
+                                        tint = colorScheme.onBackground,
+                                    )
+                                },
+                                onClick = actions.onOpenTimSettings,
+                            )
+                        },
+                        CardItem("returnOriginalTim") {
+                            ArrowPreference(
+                                title = stringResource(id = R.string.settings_return_original_tim),
+                                summary = stringResource(
+                                    id = R.string.settings_return_original_tim_summary,
+                                ),
+                                startAction = {
+                                    Icon(
+                                        imageVector = Icons.Filled.RestartAlt,
+                                        contentDescription = stringResource(
+                                            id = R.string.settings_return_original_tim,
+                                        ),
+                                        modifier = Modifier.padding(end = 6.dp),
+                                        tint = colorScheme.onBackground,
+                                    )
+                                },
+                                onClick = actions.onReturnToOriginalTim,
                             )
                         },
                         CardItem("about") {

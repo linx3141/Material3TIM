@@ -5,6 +5,9 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BookmarkAdd
+import com.material3tim.data.model.ChatPartKind
+import com.material3tim.data.source.AppDataSources
 import androidx.compose.material.icons.filled.AddReaction
 import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.Checklist
@@ -54,6 +57,7 @@ import androidx.compose.ui.unit.dp
 internal enum class MessageMenuAction(val label: String, val icon: ImageVector) {
     PLUS_ONE("+1", Icons.Filled.AddReaction),
     COPY("复制", Icons.Filled.ContentCopy),
+    SAVE_TO_COLLECTION("收藏", Icons.Filled.BookmarkAdd),
     FORWARD("转发", Icons.Filled.Share),
     MULTI_SELECT("多选", Icons.Filled.Checklist),
     REPLY("引用", Icons.AutoMirrored.Filled.Reply),
@@ -61,6 +65,13 @@ internal enum class MessageMenuAction(val label: String, val icon: ImageVector) 
     ADD_TO_FAVORITE("添加到表情", Icons.Filled.AddReaction),
     RECALL("撤回", Icons.AutoMirrored.Filled.Undo),
     DELETE("删除", Icons.Filled.Delete),
+}
+
+internal fun openMessageCollection(context: android.content.Context, message: ChatMessage) {
+    if (AppDataSources.personalLibrary?.collect(message) != true) {
+        android.widget.Toast.makeText(context, context.getString(com.material3tim.R.string.profile_collect_failed),
+            android.widget.Toast.LENGTH_SHORT).show()
+    }
 }
 
 /** TIM 原生撤回时限：自己发送的消息 2 分钟内可撤回。 */
@@ -91,6 +102,13 @@ internal fun visibleMessageMenuActions(
     return MessageMenuAction.entries.filter { action ->
         when (action) {
             MessageMenuAction.RECALL -> recallVisible
+            MessageMenuAction.SAVE_TO_COLLECTION -> AppDataSources.personalLibrary != null && when (message.type) {
+                ChatMessageType.TEXT -> message.content.isNotBlank() && message.parts.none { it.kind == ChatPartKind.IMAGE }
+                ChatMessageType.IMAGE -> !message.imagePath.isNullOrBlank()
+                ChatMessageType.VIDEO -> !message.videoPath.isNullOrBlank()
+                ChatMessageType.FILE, ChatMessageType.VOICE -> !message.mediaPath.isNullOrBlank()
+                else -> false
+            }
             MessageMenuAction.AT_SENDER -> atSenderVisible
             MessageMenuAction.ADD_TO_FAVORITE -> addToFavoriteVisible
             else -> true

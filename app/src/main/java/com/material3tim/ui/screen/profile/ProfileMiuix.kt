@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
@@ -34,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -70,6 +72,7 @@ fun ProfileMiuix(
     bottomInnerPadding: Dp,
 ) {
     val profile = ChatRepository.profile
+    val context = LocalContext.current
     val scrollBehavior = MiuixScrollBehavior()
     val listState = rememberLazyListState()
     val enableBlur = LocalEnableBlur.current
@@ -151,6 +154,15 @@ fun ProfileMiuix(
                                 icon = Icons.Filled.Apps,
                                 title = stringResource(R.string.profile_services),
                                 onClick = { navigator.push(Route.Services) },
+                            )
+                        },
+                        CardItem("qzone") {
+                            ProfileEntryMiuix(
+                                icon = Icons.Filled.Public,
+                                title = stringResource(R.string.profile_qzone),
+                                onClick = {
+                                    com.material3tim.ui.util.openQZone(context, profile.timId)
+                                },
                             )
                         },
                     ),

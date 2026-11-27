@@ -50,7 +50,7 @@ sealed interface Route : NavKey, Parcelable {
         val token: String = "",
     ) : Route
 
-    /** 扫一扫：调系统相机拍照后识别二维码并跳转。 */
+    /** 扫一扫：应用内 CameraX 预览 + 扫码框实时识别，失败可改选相册图片。 */
     @Parcelize
     @Serializable
     data object ScanQr : Route

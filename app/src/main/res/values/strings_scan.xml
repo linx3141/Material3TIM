@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ========== 扫一扫（打开相机拍照 / 相册单选图片 + ZXing 识别二维码） ========== -->
+    <!-- ========== 扫一扫（CameraX 预览 + 扫码框 + ZXing 实时识别 / 相册图片） ========== -->
     <string name="scan_title">扫一扫</string>
-    <string name="scan_open_camera">打开相机</string>
     <string name="scan_pick_image">选择图片</string>
     <string name="scan_cancel">取消</string>
+    <string name="scan_torch">手电筒</string>
+    <string name="scan_torch_on">关闭手电</string>
     <string name="scan_decoding">正在识别二维码…</string>
-    <string name="scan_error_camera">无法打开系统相机</string>
+    <string name="scan_permission_needed">需要相机权限才能扫码</string>
+    <string name="scan_permission_denied">相机权限已被拒绝，请在系统设置中允许</string>
+    <string name="scan_grant_permission">允许使用相机</string>
+    <string name="scan_error_camera">无法启动相机</string>
     <string name="scan_error_no_qr">未识别到二维码</string>
     <string name="scan_error_open_failed">无法打开二维码内容</string>
     <string name="scan_result_label">识别结果</string>

@@ -30,8 +30,9 @@ fun rememberM3TimColorScheme(
     isAmoled: Boolean,
     paletteStyle: PaletteStyle,
     colorSpec: ColorSpecVersion,
+    followSystem: Boolean = false,
 ): ColorScheme {
-    val systemSeed = if (seedColor == Color.Unspecified) rememberMonetSeedColor() else null
+    val systemSeed = if (seedColor == Color.Unspecified) rememberMonetSeedColor(isDark) else null
     val context = LocalMonetContext.current ?: LocalContext.current
     val dynamicSeed = if (seedColor == Color.Unspecified && systemSeed == null) {
         try {
@@ -50,12 +51,21 @@ fun rememberM3TimColorScheme(
     }
     // SPEC 2026 只支持 CMF：先把风格归一成 CMF，再归一 spec（CMF 固定 2026）。
     val effectiveStyle = colorSpec.effectiveStyle(paletteStyle)
-    return rememberM3TimDynamicColorScheme(
+    val effectiveSpec = colorSpec.effectiveFor(effectiveStyle)
+    val generated = rememberM3TimDynamicColorScheme(
         seedColor = seed,
         isDark = isDark,
         style = effectiveStyle,
-        specVersion = colorSpec.effectiveFor(effectiveStyle),
-    ).amoledBackground(isAmoled)
+        specVersion = effectiveSpec,
+    )
+    // “跟随系统”开关开启时直接采用系统语义色，和系统设置页一致；
+    // 关闭后按 keyColor + 风格/规范生成。
+    val scheme = if (followSystem) {
+        rememberSystemFollowColorScheme(isDark, generated)
+    } else {
+        generated
+    }
+    return scheme.amoledBackground(isAmoled)
 }
 
 @Composable

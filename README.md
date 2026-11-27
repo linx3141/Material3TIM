@@ -1,5 +1,7 @@
 # Material3 TIM
 
+聊天表情面板底部可直接切换 TIM 和 Telegram 表情包。首次登录与构建配置见 [Telegram 表情包同步](docs/telegram-stickers.md)。
+
 用自写的 Jetpack Compose 界面完整替换 **TIM（QQ NT 架构）** 官方 UI 的 Xposed 模块。同一个 APK 同时是**独立 App**（可直接安装预览 UI）和 **LSPosed 模块**（在 TIM 进程内接管界面），分阶段开发中。
 
 > **当前状态（v0.1.0 / versionCode 1，首个公开版本）**
@@ -7,6 +9,7 @@
 > - **第 1 步 ✅**：独立 Compose UI APK —— 全部页面 UI 已完成（示例数据）。
 > - **第 2 步 ✅**：同一个 APK 作为 LSPosed 模块在 TIM 进程内接管界面（测试机 + TIM 4.1.0.4050 真机验证通过）。
 > - **第 3 步 🔄 进行中**：真实 TIM 数据读写大部分打通（会话 / 消息收发 / 联系人 / 资料 / 聊天信息 / 群公告…），v0.5.77 已接入**实时消息推送**、v0.5.78 补全**单条转发与 +1（复读）**、v0.5.79 修复**打开聊天时首帧闪到列表顶部**、v0.5.80 修复**多选点击拦截与整行选择**、v0.5.81 修复**Miuix 长按菜单 / M3E 表情面板的沉浸式系统栏**、v0.5.82 适配**表情面板「收藏」页（用户自己收藏的表情图片）并移除「最近」**、v0.5.83 调整**收藏表情排序（最新添加的排最前）**、v0.5.84 支持**点击收藏表情直接发送**、v0.5.85 接入**聊天信息页置顶/消息免打扰**并实现**查找聊天记录**、v0.5.86 实现**消息页右上角加号菜单**（创建群聊 / 加好友群 / 扫一扫，M3E 与 Miuix 各自原生弹出菜单）、v0.5.87 接入**加号菜单三项真实功能**（创建群聊、QQ号/手机号/群号搜索加好友/群、扫一扫），v0.5.88 修复**建群成员丢失**与**非好友/非成员搜索不到**，v0.5.89 支持**纯昵称搜群**与**手机号搜索**；语音播放、文件打开、红包领取已接入，系统通知栏消息与已读回执尚未完成。
+> - **NPatch 嵌入模式增强（2026-11）**：主题页新增「跟随系统取色」开关（默认开）；「我的」与「他人资料」页新增 QQ 空间入口；扫一扫改为**应用内 CameraX 预览 + 扫码框 + ZXing 实时识别**（不再拉起系统相机，保留相册图片兜底）；联系人页 / 新的朋友页的「加好友」入口接通搜索与验证流程；设置页新增「回到原版 TIM」；TIM 原生设置页新增「Material3 TIM」入口，用于关闭覆盖层后重新启用。
 >
 > **数据口径（重要）**：
 >
@@ -905,6 +908,21 @@ adb -s <DEVICE_SERIAL> install -r app/build/outputs/apk/release/app-release.apk 
 - 历史版本与提交记录见 git tag（`v0.5.76` 起）；不在仓库内保存截图/聊天数据。
 
 **启用方法（LSPosed）**：安装 APK → LSPosed 管理器里启用「Material3 TIM」模块（作用域 `com.tencent.tim`）→ 强制停止 TIM 再打开。停用模块即可恢复 TIM 原界面。
+
+**NPatch 集成模式（`--embed`）**：NPatch 会把模块 APK 解包到宿主
+`cache/code_cache/mods/io.github.linx3141.material3tim/`，`ModuleResources`
+用该路径构建**独立的模块 Resources**（模块 APK + framework-res），不再把
+模块资源注入宿主；设置写入 TIM 本地的 `material3tim_host`，不依赖管理器
+的远端偏好服务。可直接与 QAuxv 一起内嵌：
+
+```bat
+java -jar npatch.jar -m Material3Tim.apk -m QAuxv.apk -o out TIM.apk
+```
+
+**与 QAuxv 共存**：Material3TIM 只覆盖 `SplashActivity`，不注入宿主
+Resources，因此不会和 QAuxv 的 `Parasitics` 抢 0x7f 资源 ID。需要改 QAuxv
+设置时，在 Material3TIM「设置 → 打开 TIM 原生设置」进入 TIM 原生设置页，
+QAuxv 的入口就在那里；返回后自动回到 Material3TIM。
 
 ## 技术栈
 

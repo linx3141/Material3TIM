@@ -99,6 +99,7 @@ internal fun ContactDetailMiuix(
     isProfileLoadFailed: Boolean = false,
     onRetryProfile: () -> Unit = {},
     onAddFriend: () -> Unit = {},
+    onOpenQZone: () -> Unit = {},
     manageRole: GroupMemberRole? = null,
     manageTarget: ChatMember? = null,
     manageChatId: String = "",
@@ -251,6 +252,20 @@ internal fun ContactDetailMiuix(
                                         R.string.contact_remark_edit
                                     },
                                 ),
+                                summary = "",
+                            )
+                        }
+                    }
+                }
+                if (!isSelfProfile) {
+                    item(key = "qzone") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = onOpenQZone,
+                            showIndication = true,
+                        ) {
+                            BasicComponent(
+                                title = stringResource(R.string.contact_qzone),
                                 summary = "",
                             )
                         }

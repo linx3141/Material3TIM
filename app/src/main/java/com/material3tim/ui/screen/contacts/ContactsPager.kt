@@ -24,7 +24,7 @@ import com.material3tim.ui.navigation3.Navigator
  */
 @Composable
 fun ContactsPager(
-    @Suppress("UNUSED_PARAMETER") navigator: Navigator,
+    navigator: Navigator,
     bottomInnerPadding: Dp,
     isCurrentPage: Boolean = true,
 ) {
@@ -71,6 +71,7 @@ fun ContactsPager(
                 materialSearchText = status.searchText
             },
             bottomInnerPadding = bottomInnerPadding,
+            onAddFriend = { navigator.push(com.material3tim.ui.navigation3.Route.AddFriend) },
         )
 
         UiMode.Material -> ContactsPagerMaterial(
@@ -78,6 +79,7 @@ fun ContactsPager(
             searchText = materialSearchText,
             onSearchTextChange = { materialSearchText = it },
             bottomInnerPadding = bottomInnerPadding,
+            onAddFriend = { navigator.push(com.material3tim.ui.navigation3.Route.AddFriend) },
         )
     }
 }

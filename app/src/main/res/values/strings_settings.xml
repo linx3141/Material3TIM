@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 「设置」「我的」「关于」页面补充文案。公共文案见 values/strings.xml。 -->
 <resources>
+    <!-- ========== 设置页：与其它 Xposed 模块共存 ========== -->
+    <string name="settings_open_tim_settings">打开 TIM 原生设置</string>
+    <string name="settings_open_tim_settings_summary">访问 QAuxv 等模块注入的设置入口；返回后回到 Material3TIM</string>
+    <string name="settings_open_tim_settings_failed">无法打开 TIM 原生设置（仅宿主模式可用）</string>
+    <string name="settings_return_original_tim">回到原版 TIM</string>
+    <string name="settings_return_original_tim_summary">关闭 Material3TIM 界面，重启后显示 TIM 原生界面；可在 TIM 设置页的「Material3 TIM」入口重新启用</string>
+    <string name="settings_return_original_tim_failed">仅宿主模式可用</string>
+
     <!-- ========== 关于页 ========== -->
     <string name="about_version_format">版本 %1$s（%2$d）</string>
     <string name="about_ui_style_format">界面风格：%1$s</string>

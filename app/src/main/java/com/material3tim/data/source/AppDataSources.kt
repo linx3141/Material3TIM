@@ -1,5 +1,7 @@
 package com.material3tim.data.source
 
+import com.material3tim.data.model.ForwardedFile
+
 import com.material3tim.data.model.ChatInfoData
 import com.material3tim.data.model.GroupAssistantData
 import com.material3tim.data.model.GroupNotice
@@ -260,6 +262,9 @@ interface MessageSource {
         knownPath: String?,
     ): Boolean = false
 
+    /** 下载合并转发内的附件；仅返回目标附件已确认下载完成的本地路径。 */
+    suspend fun downloadForwardedFile(file: ForwardedFile): String? = null
+
     /** 用系统应用通过 TIM FileProvider content:// 打开本地文件；成功拉起返回 true。 */
     fun openLocalFile(path: String): Boolean = false
 
@@ -378,6 +383,9 @@ interface ChatSettingSource {
     /** 设置会话未读状态（true=标为未读，false=标为已读）；成功返回 true。阻塞。 */
     fun setChatUnread(chatId: String, unread: Boolean): Boolean = false
 
+    /** 撤下该会话的模块消息通知；实现自行调度，不阻塞 UI。 */
+    fun dismissChatNotification(chatId: String) {}
+
     /** 删除会话（仅删除会话列表条目，不删除聊天记录）；成功返回 true。阻塞。 */
     fun deleteChat(chatId: String): Boolean = false
 
@@ -488,8 +496,18 @@ interface VoicePlaybackSource {
     fun resumeVoice(): Boolean = false
 }
 
+/** 宿主原生收藏和文件助手入口。 */
+interface PersonalLibrarySource {
+    fun openFavorites(): Boolean
+    fun openFiles(): Boolean
+    fun collect(message: ChatMessage): Boolean
+}
+
 /** 可插拔的数据源注册表（第 3 步：真实 TIM 数据接入）。 */
 object AppDataSources {
+
+    @Volatile
+    var personalLibrary: PersonalLibrarySource? = null
 
     @Volatile
     var chatSource: ChatSource? = null

@@ -62,6 +62,7 @@ fun NewFriendsMaterial(
     onRetry: () -> Unit = {},
     onAccept: (FriendRequest) -> Unit = {},
     onReject: (FriendRequest) -> Unit = {},
+    onAddFriend: () -> Unit = {},
 ) {
     val navigator = LocalNavigator.current
     val context = LocalContext.current
@@ -104,7 +105,7 @@ fun NewFriendsMaterial(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item(key = "add_friend") {
-                NewFriendsAddEntryMaterial(onClick = showComingSoon)
+                NewFriendsAddEntryMaterial(onClick = onAddFriend)
             }
             when {
                 loading && requests.isEmpty() -> item(key = "loading") {

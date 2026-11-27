@@ -1371,7 +1371,10 @@ private fun ChatDetailContent(
             Log.d("Material3Tim", "ime: chat detail keyed chat=${chat.id}")
         }
         val chatListScrollState = remember { ChatListScrollState() }
-        CompositionLocalProvider(LocalChatListScrollState provides chatListScrollState) {
+        CompositionLocalProvider(
+            LocalChatListScrollState provides chatListScrollState,
+            LocalChatImageMessages provides messages,
+        ) {
         when (LocalUiMode.current) {
             UiMode.Miuix -> ChatDetailMiuix(
             chat = chat,

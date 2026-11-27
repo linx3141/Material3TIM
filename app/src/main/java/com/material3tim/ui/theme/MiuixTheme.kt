@@ -1,6 +1,7 @@
 package com.material3tim.ui.theme
 
 import android.app.Activity
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -42,7 +43,7 @@ fun MiuixM3TimTheme(
         ThemeColorSpec.Spec2021
     }
 
-    val monetSeed = rememberMonetSeedColor()
+    val monetSeed = rememberMonetSeedColor(darkTheme)
     val monetContext = LocalMonetContext.current ?: context
     val dynamicSeed = if (appSettings.keyColor == 0 && appSettings.colorMode.isMonet && monetSeed == null) {
         try {
@@ -54,21 +55,41 @@ fun MiuixM3TimTheme(
     } else {
         null
     }
+    // 默认“跟随系统”：不传 keyColor，让 Miuix 的 ThemeController 走
+    // platformDynamicColors（系统语义色 / 系统 palette overlay）。
+    // 用户自定义颜色或选了别的风格/规范时，仍以取到的系统色为种子生成。
+    val followSystem = appSettings.followSystem &&
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val resolvedKeyColor: Color? = when {
+        followSystem -> null
         appSettings.keyColor != 0 -> Color(appSettings.keyColor)
         appSettings.colorMode.isMonet -> monetSeed ?: dynamicSeed
         else -> null
     }
 
+    val baseMode = when (appSettings.colorMode) {
+        ColorMode.SYSTEM -> ColorSchemeMode.System
+        ColorMode.LIGHT -> ColorSchemeMode.Light
+        ColorMode.DARK -> ColorSchemeMode.Dark
+        ColorMode.MONET_SYSTEM -> ColorSchemeMode.MonetSystem
+        ColorMode.MONET_LIGHT -> ColorSchemeMode.MonetLight
+        ColorMode.MONET_DARK, ColorMode.DARK_AMOLED -> ColorSchemeMode.MonetDark
+    }
+    // “跟随系统”开关开启时强制走 MonetSystem/Light/Dark，让 ThemeController
+    // 调用 platformDynamicColors 直接采用系统语义色；关闭时保持原 colorMode
+    // （用户关掉 miuixMonet 就是静态 Miuix 配色）。
+    val colorSchemeMode = if (followSystem) {
+        when (baseMode) {
+            ColorSchemeMode.System -> ColorSchemeMode.MonetSystem
+            ColorSchemeMode.Light -> ColorSchemeMode.MonetLight
+            ColorSchemeMode.Dark -> ColorSchemeMode.MonetDark
+            else -> baseMode
+        }
+    } else {
+        baseMode
+    }
     val controller = ThemeController(
-        when (appSettings.colorMode) {
-            ColorMode.SYSTEM -> ColorSchemeMode.System
-            ColorMode.LIGHT -> ColorSchemeMode.Light
-            ColorMode.DARK -> ColorSchemeMode.Dark
-            ColorMode.MONET_SYSTEM -> ColorSchemeMode.MonetSystem
-            ColorMode.MONET_LIGHT -> ColorSchemeMode.MonetLight
-            ColorMode.MONET_DARK, ColorMode.DARK_AMOLED -> ColorSchemeMode.MonetDark
-        },
+        colorSchemeMode,
         keyColor = resolvedKeyColor,
         isDark = darkTheme,
         paletteStyle = miuixPaletteStyle,

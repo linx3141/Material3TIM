@@ -9,6 +9,9 @@
     <string name="chat_search_pinned">置顶会话</string>
     <string name="chat_member_count">%d 位成员</string>
     <string name="chat_online">在线</string>
+    <string name="chat_notification_reply">回复</string>
+    <string name="chat_notification_reply_invalid">请输入 1–4000 个字符</string>
+    <string name="chat_notification_reply_unconfirmed">未确认发送，请进入聊天查看</string>
 
     <!-- 下拉刷新文案（Miuix PullToRefresh 需要四条） -->
     <string name="chat_refresh_pulling">下拉刷新</string>
@@ -25,6 +28,18 @@
     <!-- 聊天详情占位页 -->
     <string name="chat_input_hint">输入消息…</string>
     <string name="chat_detail_back">返回</string>
+
+    <!-- 按住说话的语音输入（语音转文字） -->
+    <string name="chat_attach">附件</string>
+    <string name="chat_voice_input">语音输入</string>
+    <string name="chat_voice_listening">正在听…</string>
+    <string name="chat_voice_input_hint">按住说话，松开转文字</string>
+    <string name="chat_voice_input_permission">请允许录音权限后再按住语音输入</string>
+    <string name="chat_voice_input_unavailable">当前设备没有可用的语音识别服务</string>
+    <string name="chat_voice_input_no_match">没有听清，请重试</string>
+    <string name="chat_voice_input_network">语音识别网络不可用</string>
+    <string name="chat_voice_input_busy">语音识别忙，请稍后再试</string>
+    <string name="chat_voice_input_failed">语音输入失败</string>
 
     <!-- ========== 联系人页 ========== -->
     <string name="contacts_search_empty">没有找到相关联系人</string>

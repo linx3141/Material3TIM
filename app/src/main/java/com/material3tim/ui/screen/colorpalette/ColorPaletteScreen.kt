@@ -50,6 +50,7 @@ fun ColorPaletteScreen() {
         onSetThemeMode = viewModel::setThemeMode,
         onSetMiuixMonet = viewModel::setMiuixMonet,
         onSetKeyColor = viewModel::setKeyColor,
+        onSetFollowSystem = viewModel::setFollowSystem,
         onSetColorMode = viewModel::setColorMode,
         onSetColorStyle = viewModel::setColorStyle,
         onSetColorSpec = viewModel::setColorSpec,

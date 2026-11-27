@@ -45,6 +45,8 @@ enum class ColorMode(val value: Int) {
 data class AppSettings(
     val colorMode: ColorMode,
     val keyColor: Int,
+    /** 主题直接跟随系统 Material You 调色板（默认开启）。 */
+    val followSystem: Boolean = true,
     val paletteStyle: PaletteStyle,
     val colorSpec: ColorSpecVersion,
 )
@@ -105,7 +107,13 @@ object ThemeController {
             ColorSpecVersion.SPEC_2025
         }
 
-        return AppSettings(colorMode, keyColor, paletteStyle, colorSpec)
+        return AppSettings(
+            colorMode = colorMode,
+            keyColor = keyColor,
+            followSystem = repo.followSystem,
+            paletteStyle = paletteStyle,
+            colorSpec = colorSpec,
+        )
     }
 }
 

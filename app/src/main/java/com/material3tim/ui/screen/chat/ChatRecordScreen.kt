@@ -1,16 +1,22 @@
 package com.material3tim.ui.screen.chat
 
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import com.material3tim.R
 import com.material3tim.data.model.ChatMessage
 import com.material3tim.data.model.ChatMessageType
+import com.material3tim.data.model.ForwardedFile
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.ui.LocalUiMode
 import com.material3tim.ui.UiMode
@@ -18,7 +24,9 @@ import com.material3tim.ui.navigation3.LocalNavigator
 import com.material3tim.ui.navigation3.Route
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * 当前聊天记录页面的 msgId：作为「嵌套记录卡片再次打开」时的 parentMsgId。
@@ -159,6 +167,14 @@ fun ChatRecordScreen(
     rootMsgId: Long = 0L,
 ) {
     val navigator = LocalNavigator.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val filePaths = remember(chatId, msgId, elementId, parentMsgId, rootMsgId) {
+        mutableStateMapOf<String, String>()
+    }
+    var openingFile by remember(chatId, msgId, elementId, parentMsgId, rootMsgId) {
+        mutableStateOf<String?>(null)
+    }
     var messages by remember(chatId, msgId, elementId, parentMsgId, rootMsgId) {
         mutableStateOf<List<ChatMessage>>(emptyList())
     }
@@ -204,6 +220,53 @@ fun ChatRecordScreen(
         }
     }
 
+    val onFileClick: (ChatMessage) -> Unit = { message ->
+        if (openingFile == null) {
+            openingFile = message.id
+            scope.launch {
+                try {
+                    val source = AppDataSources.messageSource
+                    val knownPath = filePaths[message.id] ?: message.mediaPath
+                    val local = withContext(Dispatchers.IO) {
+                        knownPath?.takeIf { File(it).let { file -> file.isFile && file.length() > 0L } }
+                    }
+                    val path = local ?: run {
+                        Toast.makeText(context, context.getString(R.string.chat_file_downloading), Toast.LENGTH_SHORT).show()
+                        withContext(Dispatchers.IO) {
+                            source?.downloadForwardedFile(
+                                ForwardedFile(
+                                    chatId = chatId,
+                                    recordMsgId = msgId,
+                                    recordElementId = elementId,
+                                    parentMsgId = parentMsgId,
+                                    rootMsgId = rootMsgId,
+                                    messageId = message.msgId,
+                                    elementId = message.elementId,
+                                    rowId = message.id,
+                                ),
+                            )
+                        }
+                    }
+                    if (path != null) filePaths[message.id] = path
+                    val error = when {
+                        path == null -> R.string.chat_file_download_failed
+                        !withContext(Dispatchers.IO) { source?.openLocalFile(path) == true } ->
+                            R.string.chat_file_open_failed
+                        else -> null
+                    }
+                    if (error != null) Toast.makeText(context, context.getString(error), Toast.LENGTH_SHORT).show()
+                } finally {
+                    openingFile = null
+                }
+            }
+        }
+    }
+    val paths = filePaths.toMap()
+    val visibleMessages = remember(messages, paths) {
+        if (paths.isEmpty()) messages else messages.map { message ->
+            paths[message.id]?.let { message.copy(mediaPath = it) } ?: message
+        }
+    }
     val onBack: () -> Unit = { navigator.pop() }
     val onRetry: () -> Unit = {
         messages = emptyList()
@@ -215,19 +278,24 @@ fun ChatRecordScreen(
     CompositionLocalProvider(
         LocalChatRecordParentMsgId provides msgId,
         LocalChatRecordRootMsgId provides providedRootMsgId,
+        LocalChatImageMessages provides visibleMessages,
     ) {
         when (LocalUiMode.current) {
             UiMode.Miuix -> ChatRecordMiuix(
-                messages = messages,
+                messages = visibleMessages,
                 state = state,
                 onBack = onBack,
                 onRetry = onRetry,
+                onFileClick = onFileClick,
+                openingFile = openingFile,
             )
             UiMode.Material -> ChatRecordMaterial(
-                messages = messages,
+                messages = visibleMessages,
                 state = state,
                 onBack = onBack,
                 onRetry = onRetry,
+                onFileClick = onFileClick,
+                openingFile = openingFile,
             )
         }
     }

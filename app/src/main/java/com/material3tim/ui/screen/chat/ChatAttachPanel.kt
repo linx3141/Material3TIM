@@ -17,6 +17,8 @@ import androidx.compose.material3.SelectableDropdownMenuItem
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -178,6 +180,7 @@ internal fun ChatAttachPanelMaterial(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 22.dp),
         ) {
             ChatAttachRows.forEachIndexed { index, rowActions ->
@@ -368,6 +371,7 @@ internal fun ChatAttachPanelMiuix(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         HorizontalPager(

@@ -33,6 +33,7 @@ internal object TimUiHook {
         hookActivityResult(module, classLoader)
         hookExternalJump(module, classLoader)
         hookAnnouncementResponse(module, classLoader)
+        NativeSettingsEntry.install(module, classLoader)
         Log.i(TAG, "TIM lifecycle hooks installed")
     }
 
@@ -276,6 +277,8 @@ internal object TimUiHook {
     private fun onActivityEvent(module: MainModule, activity: Activity) {
         if (activity.javaClass.name != MAIN_ACTIVITY) return
         if (activity.isFinishing) return
+        // 用户点了「回到原版 TIM」：不再挂 Compose 覆盖层，保留 TIM 原生界面。
+        if (!UiHost.isMaterialUiEnabled(activity)) return
         // 冷启动：从通知点进来时 launcher intent 带会话 id（热启动走 hookNewIntent）。
         runCatching {
             com.material3tim.data.source.NavigationRequests.requestFromIntent(activity.intent)

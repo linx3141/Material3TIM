@@ -1,22 +1,27 @@
 package com.material3tim.ui.screen.chat
 
+import android.Manifest
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.ContentValues
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
-import android.provider.MediaStore
+import android.os.SystemClock
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -24,6 +29,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.core.app.ActivityCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
@@ -32,17 +41,18 @@ import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import com.material3tim.R
 import com.material3tim.data.source.AppDataSources
-import com.material3tim.ui.LocalUiMode
-import com.material3tim.ui.UiMode
 import com.material3tim.ui.util.ExternalLink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** 相机权限请求码（宿主 Activity 直接用 ActivityCompat.requestPermissions）。 */
+private const val CAMERA_PERMISSION_REQUEST = 0x4D33
+
 /** 扫一扫页面的状态。 */
 internal sealed interface ScanQrState {
     /**
-     * 默认操作页：三个按钮可用；可带上一次失败的原因（未识别/相机不可用/无法打开）
+     * 默认操作页：相机实时预览；可带上一次失败的原因（未识别/相机不可用/无法打开）
      * 与已识别但打不开的原始文本（供复制）。
      */
     data class Idle(
@@ -56,7 +66,7 @@ internal sealed interface ScanQrState {
 
 /** 扫一扫失败原因。 */
 internal enum class ScanQrError {
-    /** 设备没有可处理 ACTION_IMAGE_CAPTURE 的相机应用，或无法创建输出图片。 */
+    /** Camerax 初始化/绑定失败（设备无相机、被占用、权限被系统撤销）。 */
     CameraUnavailable,
 
     /** 照片/相册图片里没有识别到二维码。 */
@@ -69,116 +79,137 @@ internal enum class ScanQrError {
 /**
  * 扫一扫页面入口（消息页加号菜单「扫一扫」→ `Route.ScanQr`）。
  *
- * 默认显示三按钮操作页（不再自动拉相机）：
- * - 「打开相机」：系统相机拍照（MediaStore 输出）→ ZXing 解码；
- * - 「选择图片」：系统媒体选择器单选图片 → 直接解码；
- * - 「取消」：关闭页面。
- * 解码成功后按内容分发（http(s) → [ExternalLink]；其它优先 [AppDataSources.qrActionSource]，
- * 再退化 ACTION_VIEW）；成功 Toast 并关闭，失败在按钮上方显示原因（可再点按钮重试）。
+ * 页面内直接用 CameraX 预览 + 扫码框 + ZXing 实时解码，不再拉起系统相机：
+ * - 首次进入请求 CAMERA 权限；拒绝后显示权限说明，仍可「选择图片」；
+ * - 预览下方有手电筒、相册、取消；
+ * - 解出内容后按内容分发（http(s) → [ExternalLink]；其它优先
+ *   [AppDataSources.qrActionSource]，再退化 ACTION_VIEW）；成功 Toast 并关闭，
+ *   失败在取景框下方显示原因（可复制内容、继续扫）。
  */
 @Composable
 fun ScanQrScreen(onClose: () -> Unit) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<ScanQrState>(ScanQrState.Idle()) }
-    // 相机照片写入的 MediaStore Uri：结果回调/旋转重建后还要用它解码，故 rememberSaveable。
-    var pendingUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var granted by remember { mutableStateOf(hasCameraPermission(context)) }
+    var denied by rememberSaveable { mutableStateOf(false) }
+    var requested by rememberSaveable { mutableStateOf(false) }
+    var lastText by remember { mutableStateOf("") }
+    var lastDetectedAt by remember { mutableLongStateOf(0L) }
 
-    fun deleteTempImage(uri: Uri?) {
-        if (uri != null) {
-            runCatching { context.contentResolver.delete(uri, null, null) }
+    // 从权限弹窗 / 系统设置回来时重新读权限状态。
+    //
+    // 这里不用 ActivityResultContracts.RequestPermission：宿主 TIM 的 Activity
+    // 不是 ComponentActivity，我们的 HostOwners 只转发 onActivityResult，
+    // 收不到 onRequestPermissionsResult；直接 requestPermissions + onResume 复查
+    // 对宿主/独立 App 都成立。
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val ok = hasCameraPermission(context)
+                granted = ok
+                if (requested && !ok) denied = true
+            }
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // 解码 + 分发（相机与相册两条路径共用）。
-    fun handlePickedUri(uri: Uri, deleteAfterDecode: Boolean) {
-        state = ScanQrState.Working
-        scope.launch {
-            val text = withContext(Dispatchers.IO) {
-                decodeQrFromUri(context, uri, deleteAfterDecode)
-            }
-            if (text.isNullOrBlank()) {
-                state = ScanQrState.Idle(errorKind = ScanQrError.NoQrCode)
-                return@launch
-            }
-            val opened = runCatching { dispatchQrContent(context, text) }.getOrDefault(false)
-            if (opened) {
-                Toast.makeText(context, R.string.scan_opened, Toast.LENGTH_SHORT).show()
-                onClose()
-            } else {
-                // 没有可打开的方式：回到操作页显示原因 + 可复制文本。
-                state = ScanQrState.Idle(
-                    errorKind = ScanQrError.OpenFailed,
-                    errorContent = text,
+    // 首次进入自动申请一次。
+    LaunchedEffect(Unit) {
+        if (!granted && !requested) {
+            requested = true
+            context.findActivity()?.let { activity ->
+                ActivityCompat.requestPermissions(
+                    activity,
+                    arrayOf(Manifest.permission.CAMERA),
+                    CAMERA_PERMISSION_REQUEST,
                 )
             }
         }
     }
 
-    // 相册单选：取消（uri == null）直接留在默认操作页。
+    fun finishWithText(text: String) {
+        val opened = runCatching { dispatchQrContent(context, text) }.getOrDefault(false)
+        if (opened) {
+            Toast.makeText(context, R.string.scan_opened, Toast.LENGTH_SHORT).show()
+            onClose()
+        } else {
+            // 没有可打开的方式：回到取景页显示原因 + 可复制文本。
+            state = ScanQrState.Idle(
+                errorKind = ScanQrError.OpenFailed,
+                errorContent = text,
+            )
+        }
+    }
+
+    fun handlePickedUri(uri: Uri) {
+        state = ScanQrState.Working
+        scope.launch {
+            val text = withContext(Dispatchers.IO) { decodeQrFromUri(context, uri) }
+            if (text.isNullOrBlank()) {
+                state = ScanQrState.Idle(errorKind = ScanQrError.NoQrCode)
+                return@launch
+            }
+            finishWithText(text)
+        }
+    }
+
+    // 相机实时识别回调（在相机分析线程 post 回主线程后才进来）。
+    fun onDetected(text: String) {
+        if (state is ScanQrState.Working) return
+        val now = SystemClock.uptimeMillis()
+        // 同一个码连续出现（失败后仍未移开镜头）时不要反复分发/弹 Toast。
+        if (text == lastText && now - lastDetectedAt < 3_000L) return
+        lastText = text
+        lastDetectedAt = now
+        state = ScanQrState.Working
+        scope.launch {
+            // 分发本身要跳转 Activity，放主线程；只为统一 loading 状态。
+            finishWithText(text)
+        }
+    }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
         if (uri != null) {
-            // 用户相册里的原图不能删除，只解码。
-            handlePickedUri(uri, deleteAfterDecode = false)
+            handlePickedUri(uri)
         }
     }
 
-    // 系统相机：取消直接留在默认操作页。
-    val cameraLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val uri = pendingUri
-        pendingUri = null
-        if (result.resultCode == Activity.RESULT_OK && uri != null) {
-            // 相机写入的临时照片解码后删除。
-            handlePickedUri(uri, deleteAfterDecode = true)
-        } else {
-            deleteTempImage(uri)
-        }
-    }
-
-    fun launchCamera() {
-        val uri = createScanOutputUri(context)
-        if (uri == null) {
-            state = ScanQrState.Idle(errorKind = ScanQrError.CameraUnavailable)
-            return
-        }
-        pendingUri = uri
-        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
-            putExtra(MediaStore.EXTRA_OUTPUT, uri)
-            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        }
-        if (intent.resolveActivity(context.packageManager) == null) {
-            deleteTempImage(uri)
-            pendingUri = null
-            state = ScanQrState.Idle(errorKind = ScanQrError.CameraUnavailable)
-            return
-        }
-        val launched = runCatching { cameraLauncher.launch(intent) }.isSuccess
-        if (!launched) {
-            deleteTempImage(uri)
-            pendingUri = null
-            state = ScanQrState.Idle(errorKind = ScanQrError.CameraUnavailable)
-        }
-    }
-
-    val working = state is ScanQrState.Working
-    val onOpenCamera: () -> Unit = {
-        if (!working) {
-            state = ScanQrState.Idle()
-            launchCamera()
-        }
-    }
     val onPickImage: () -> Unit = {
-        if (!working) {
+        if (state !is ScanQrState.Working) {
             state = ScanQrState.Idle()
             photoPickerLauncher.launch(
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
             )
         }
     }
+
+    val onRequestPermission: () -> Unit = {
+        val activity = context.findActivity()
+        val canAskAgain = activity != null &&
+            ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.CAMERA)
+        if (denied && !canAskAgain) {
+            // 已「拒绝且不再询问」：只能去应用详情页手动开。
+            val intent = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", context.packageName, null),
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(intent) }
+                .onFailure { Toast.makeText(context, R.string.scan_permission_denied, Toast.LENGTH_SHORT).show() }
+        } else if (activity != null) {
+            requested = true
+            ActivityCompat.requestPermissions(
+                activity,
+                arrayOf(Manifest.permission.CAMERA),
+                CAMERA_PERMISSION_REQUEST,
+            )
+        }
+    }
+
     val onCopy: (String) -> Unit = { text ->
         runCatching {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -187,26 +218,30 @@ fun ScanQrScreen(onClose: () -> Unit) {
         }
     }
 
-    when (LocalUiMode.current) {
-        UiMode.Miuix -> ScanQrMiuix(
-            state = state,
-            onOpenCamera = onOpenCamera,
-            onPickImage = onPickImage,
-            onCancel = onClose,
-            onCopy = onCopy,
-        )
-
-        UiMode.Material -> ScanQrMaterial(
-            state = state,
-            onOpenCamera = onOpenCamera,
-            onPickImage = onPickImage,
-            onCancel = onClose,
-            onCopy = onCopy,
-        )
-    }
+    QrCameraScanner(
+        state = state,
+        permissionGranted = granted,
+        permissionDenied = denied,
+        onRequestPermission = onRequestPermission,
+        onPickImage = onPickImage,
+        onCancel = onClose,
+        onCopy = onCopy,
+        onQrDetected = ::onDetected,
+        onCameraUnavailable = {
+            if (state !is ScanQrState.Working) {
+                state = ScanQrState.Idle(errorKind = ScanQrError.CameraUnavailable)
+            }
+        },
+    )
 }
 
-/** 失败提示文案（两套 UI 共用）。 */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/** 失败提示文案（扫码页共用）。 */
 @Composable
 internal fun scanQrErrorTitle(kind: ScanQrError): String = when (kind) {
     ScanQrError.CameraUnavailable -> stringResource(R.string.scan_error_camera)
@@ -214,21 +249,11 @@ internal fun scanQrErrorTitle(kind: ScanQrError): String = when (kind) {
     ScanQrError.OpenFailed -> stringResource(R.string.scan_error_open_failed)
 }
 
-/** 创建系统相机拍照输出用的 MediaStore Uri（无需 FileProvider / 存储权限，API 29+）。 */
-private fun createScanOutputUri(context: Context): Uri? = runCatching {
-    val values = ContentValues().apply {
-        put(MediaStore.Images.Media.DISPLAY_NAME, "material3tim_scan_${System.currentTimeMillis()}.jpg")
-        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-    }
-    context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-}.getOrNull()
-
 /**
  * 从 Uri 读取图片并解码二维码。
- * [deleteAfterDecode] 为 true 时（相机临时照片）无论成功失败都删除；相册原图（false）不删除。
  * 先读尺寸再按 2048 长边降采样，避免高像素照片解码时内存翻倍/被系统杀（二维码识别率不受影响）。
  */
-private fun decodeQrFromUri(context: Context, uri: Uri, deleteAfterDecode: Boolean): String? {
+private fun decodeQrFromUri(context: Context, uri: Uri): String? {
     val bitmap = runCatching {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -242,9 +267,6 @@ private fun decodeQrFromUri(context: Context, uri: Uri, deleteAfterDecode: Boole
         bitmap?.let { decodeQrBitmap(it) }
     } finally {
         if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
-        if (deleteAfterDecode) {
-            runCatching { context.contentResolver.delete(uri, null, null) }
-        }
     }
 }
 

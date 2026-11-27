@@ -18,18 +18,28 @@ val LocalMonetContext = staticCompositionLocalOf<Context?> { null }
 /**
  * 从系统壁纸取色（Monet）得到的种子色。
  *
- * 直接读 `android.R.color.system_accent1_200`（Android 12+ 由系统壁纸生成）。
- * 不用 `dynamicLightColorScheme(context)`：在 TIM 宿主里该 API 实测返回全 0 色板。
+ * Android 12+ 的系统语义色 `system_primary_light/dark` 就是系统主题的 primary；
+ * 旧实现固定读 `system_accent1_200`（深色档），浅色模式会拿到偏暗的种子。
+ * 现在按 demand 读对应明暗的 primary，旧字段只作兜底。
+ *
+ * 统一用 `Resources.getSystem()`：宿主 `LocalContext` 是模块 Context，它的
+ * Resources 不一定含 framework 资源；framework-res 里的系统色则始终可读。
  */
 @Composable
-fun rememberMonetSeedColor(): Color? {
-    val context = LocalMonetContext.current ?: androidx.compose.ui.platform.LocalContext.current
-    return remember(context) {
+fun rememberMonetSeedColor(isDark: Boolean): Color? {
+    return remember(isDark) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return@remember null
         runCatching {
-            @Suppress("DEPRECATION")
-            context.resources.getColor(android.R.color.system_accent1_200, null)
-        }.getOrNull()
-            ?.takeIf { it != 0 }
-            ?.let { Color(it) }
+            val res = android.content.res.Resources.getSystem()
+            fun color(name: String): Int? {
+                val id = res.getIdentifier(name, "color", "android")
+                if (id == 0) return null
+                return res.getColor(id, null).takeIf { it != 0 }
+            }
+            when {
+                isDark -> color("system_primary_dark") ?: color("system_accent1_200")
+                else -> color("system_primary_light") ?: color("system_accent1_600")
+            }
+        }.getOrNull()?.let { Color(it) }
     }
 }

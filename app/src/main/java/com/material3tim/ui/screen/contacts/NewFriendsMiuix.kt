@@ -73,6 +73,7 @@ fun NewFriendsMiuix(
     onRetry: () -> Unit = {},
     onAccept: (FriendRequest) -> Unit = {},
     onReject: (FriendRequest) -> Unit = {},
+    onAddFriend: () -> Unit = {},
 ) {
     val navigator = LocalNavigator.current
     val context = LocalContext.current
@@ -140,7 +141,7 @@ fun NewFriendsMiuix(
                                         modifier = Modifier.padding(end = 6.dp),
                                     )
                                 },
-                                onClick = showComingSoon,
+                                onClick = onAddFriend,
                             )
                         },
                     ),

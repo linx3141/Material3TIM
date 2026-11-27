@@ -1,7 +1,10 @@
 package com.material3tim.ui.navigation3
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
+import com.material3tim.ui.screen.chat.ChatImageGallery
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -19,6 +22,23 @@ class Navigator(
 ) {
 
     private val resultBus = mutableMapOf<String, MutableSharedFlow<Any>>()
+
+    // 会话历史可很长，图片列表只保存在当前导航会话，不打包进保存状态。
+    private val imageGalleries = mutableMapOf<Route.ChatImage, ChatImageGallery>()
+
+    internal fun pushChatImage(gallery: ChatImageGallery) {
+        val route = gallery.pages[gallery.initialPage]
+        if (route in backStack) return
+        imageGalleries[route] = gallery
+        push(route)
+    }
+
+    internal fun chatImageGallery(route: Route.ChatImage): ChatImageGallery =
+        imageGalleries[route] ?: ChatImageGallery(listOf(route), 0)
+
+    internal fun retainImageGalleries(routes: Set<Route.ChatImage>) {
+        imageGalleries.keys.retainAll(routes)
+    }
 
     /**
      * Push a key onto the back stack, idempotently: a double tap pushing the same route value
@@ -125,7 +145,12 @@ class Navigator(
 @Composable
 fun rememberNavigator(startRoute: Route): Navigator {
     val backStack = rememberNavBackStack<Route>(startRoute)
-    return androidx.compose.runtime.remember(backStack) { Navigator(backStack) }
+    val navigator = androidx.compose.runtime.remember(backStack) { Navigator(backStack) }
+    LaunchedEffect(navigator) {
+        snapshotFlow { backStack.filterIsInstance<Route.ChatImage>().toSet() }
+            .collect(navigator::retainImageGalleries)
+    }
+    return navigator
 }
 
 val LocalNavigator = staticCompositionLocalOf<Navigator> {

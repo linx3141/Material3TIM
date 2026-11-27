@@ -21,6 +21,11 @@ import com.material3tim.ui.navigation3.LocalNavigator
 @Composable
 fun FavoritesScreen() {
     val navigator = LocalNavigator.current
+    val native = com.material3tim.data.source.AppDataSources.personalLibrary
+    if (native != null) {
+        OpenNativeLibraryPage(onOpen = native::openFavorites, onReturn = { navigator.pop() })
+        return
+    }
     when (LocalUiMode.current) {
         UiMode.Miuix -> FavoritesMiuix(onBack = { navigator.pop() })
         UiMode.Material -> FavoritesMaterial(onBack = { navigator.pop() })

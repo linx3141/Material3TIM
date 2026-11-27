@@ -54,6 +54,8 @@ internal fun ChatRecordMiuix(
     state: ChatRecordUiState,
     onBack: () -> Unit,
     onRetry: () -> Unit,
+    onFileClick: (ChatMessage) -> Unit,
+    openingFile: String?,
 ) {
     val enableBlur = LocalEnableBlur.current
     val scrollBehavior = MiuixScrollBehavior()
@@ -152,7 +154,7 @@ internal fun ChatRecordMiuix(
                     }
 
                     ChatRecordUiState.Success -> {
-                        val grouped = groupChatMessages(messages)
+                        val grouped = groupChatMessages(messages, requireSenderId = true)
                         LazyColumn(
                             state = listState,
                             modifier = Modifier
@@ -166,7 +168,11 @@ internal fun ChatRecordMiuix(
                             ),
                         ) {
                             items(grouped, key = { it.message.id }) { item ->
-                                ChatMessageItemMiuix(item = item)
+                                ChatMessageItemMiuix(
+                                    item = item,
+                                    onFileClick = onFileClick,
+                                    downloadingFileMsgId = item.message.msgId.takeIf { openingFile == item.message.id } ?: 0L,
+                                )
                             }
                         }
                     }

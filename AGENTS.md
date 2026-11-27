@@ -230,6 +230,31 @@ adb -s <DEVICE_SERIAL> shell am start -n com.tencent.tim/com.tencent.mobileqq.ac
   保证系统文本选区放大镜、文本选择工具栏等平台组件有正常默认值；Compose 的 Material/Miuix 主题仍在 Compose 层单独提供。
 - 以后若新增宿主侧平台组件（PopupWindow/Dialog/TextToolbar 等），同样用这个主题，不要另建空主题。
 
+## 5.4 NPatch 集成模式 / 与 QAuxv 共存（2026-11）
+
+- **模块资源必须保持隔离**：`ModuleResources` 用 `AssetManager.addAssetPath`
+  建独立 `Resources`（模块 APK **+ `/system/framework/framework-res.apk`**）。
+  不能退回“把模块 APK 注入宿主 Activity 的 Resources”：QAuxiliary 也用
+  `Resources.addLoaders`，两个 0x7f 资源表会互相遮蔽。宿主资源创建失败时
+  宁可重启 TIM / 不挂 UI，也不要 `injectIntoHostResources`。
+- **framework-res 必须一起挂**：`ModuleContext.getTheme()` 的
+  `Theme_DeviceDefault`、系统文本放大镜属性、以及“跟随系统”的
+  `android.R.color.system_*` 都从这里解析；只挂模块 APK 会让平台主题属性
+  为 0（放大镜崩溃）和系统取色退化。
+- **NPatch embedded 没有远端偏好**：`getRemotePreferences("settings")` 会抛
+  `UnsupportedOperationException`。`UiHost` / `MainModule` 已用 runCatching
+  回退；`HostSettingsPrefs` 的 remote 为 null 时读写 TIM 本地
+  `material3tim_host`，设置页与预测性返回开关都正常。新增读取设置的代码
+  也必须容忍 remote 为 null。
+- **默认“跟随系统”**：Material UI 在未选自定义颜色 + TonalSpot + SPEC_2025
+  时走 `SystemColorScheme`（`android.R.color.system_*` 直接覆盖 ColorScheme）；
+  Miuix 不传 keyColor，让 `ThemeController.platformDynamicColors` 读系统
+  palette / 语义色（`miuixMonet` 未开也会走 MonetSystem/Light/Dark）。
+- **QAuxv 入口**：Material3TIM 覆盖 SplashActivity，TIM 原生设置是独立
+  Activity，不会被覆盖层挡住。设置页「打开 TIM 原生设置」会启动
+  `QPublicFragmentActivity` + `MainSettingFragment`，QAuxv 的入口就在那里。
+  不要试图把 QAuxv 的资源或 Activity 合并进模块。
+
 ## 6. 桥接开发要点
 
 - **反编译优先**：TIM 4.1 大量混淆名会变（JADX 合成字段名运行时不存在，如 `c.a.f118264c` 就踩过坑）。**先用反编译确认真实类/方法/字段名，再用反射**；优先公开方法，避免私有混淆字段。

@@ -49,6 +49,23 @@ internal object ModuleResources {
                 Regex("jar:file:(.*)!/").find(url)?.groupValues?.get(1)
             }.getOrNull(),
         )?.let { return it }
+        // NPatch 集成模式：模块 APK 被解包到
+        // cache/code_cache/mods/io.github.linx3141.material3tim/<crc>.apk。
+        // 这是 embedded 模式下最直接的路径（不需要模块被 PackageManager 安装）。
+        if (activity != null) {
+            for (dir in listOf(
+                java.io.File(activity.cacheDir, "code_cache/mods/io.github.linx3141.material3tim"),
+                java.io.File(activity.filesDir, "code_cache/mods/io.github.linx3141.material3tim"),
+            )) {
+                valid(
+                    runCatching {
+                        dir.listFiles()
+                            ?.firstOrNull { it.isFile && it.extension.equals("apk", true) }
+                            ?.absolutePath
+                    }.getOrNull(),
+                )?.let { return it }
+            }
+        }
         // 通过 PackageManager 直接查当前已安装模块的 base.apk（刚升级时最可靠）。
         if (activity != null) {
             valid(
@@ -101,9 +118,16 @@ internal object ModuleResources {
                     val assetManager = android.content.res.AssetManager::class.java
                         .getDeclaredConstructor()
                         .newInstance()
-                    val added = android.content.res.AssetManager::class.java
+                    val addAssetPath = android.content.res.AssetManager::class.java
                         .getDeclaredMethod("addAssetPath", String::class.java)
-                        .invoke(assetManager, apkPath) as? Int ?: 0
+                    // 先挂 framework-res：模块 UI 的 `android.R.style.Theme_DeviceDefault`
+                    // 以及「跟随系统」要读的 `android.R.color.system_*` 都在这里。
+                    // 不挂的话 ModuleContext 的资源表只有模块 APK，平台主题属性/系统色
+                    // 会解析失败（表现为放大镜尺寸为 0、系统取色退化成默认紫）。
+                    runCatching {
+                        addAssetPath.invoke(assetManager, "/system/framework/framework-res.apk")
+                    }
+                    val added = addAssetPath.invoke(assetManager, apkPath) as? Int ?: 0
                     if (added == 0) {
                         Log.w(TAG, "addAssetPath failed: $apkPath (attempt $attempt)")
                         null
@@ -193,28 +217,4 @@ internal object ModuleResources {
 
     private const val KEY_RES_RESTART_AT = "module_res_restart_at"
 
-    /**
-     * 兜底：把模块 APK 的资源注入宿主 Activity 的 Resources（ResourcesLoader，API 30+）。
-     * 只在自建 Resources 失败时使用。
-     */
-    fun injectIntoHostResources(module: MainModule, activity: Activity, res: Resources): Boolean {
-        if (markerOk(res)) return true
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
-        val apkPath = moduleApkPath(module, activity) ?: return false
-        return try {
-            val pfd = android.os.ParcelFileDescriptor.open(
-                java.io.File(apkPath),
-                android.os.ParcelFileDescriptor.MODE_READ_ONLY,
-            )
-            val provider = android.content.res.loader.ResourcesProvider.loadFromApk(pfd)
-            val loader = android.content.res.loader.ResourcesLoader().apply { addProvider(provider) }
-            res.addLoaders(loader)
-            val ok = markerOk(res)
-            Log.i(TAG, "fallback resources injection=$ok")
-            ok
-        } catch (t: Throwable) {
-            Log.w(TAG, "fallback resources injection failed: ${t.javaClass.simpleName} ${t.message}")
-            false
-        }
-    }
 }

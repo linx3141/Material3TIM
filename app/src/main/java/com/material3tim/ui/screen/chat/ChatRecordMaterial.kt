@@ -35,6 +35,8 @@ internal fun ChatRecordMaterial(
     state: ChatRecordUiState,
     onBack: () -> Unit,
     onRetry: () -> Unit,
+    onFileClick: (ChatMessage) -> Unit,
+    openingFile: String?,
 ) {
     ExpressiveScaffold(
         topBar = {
@@ -106,7 +108,7 @@ internal fun ChatRecordMaterial(
             }
 
             ChatRecordUiState.Success -> {
-                val grouped = groupChatMessages(messages)
+                val grouped = groupChatMessages(messages, requireSenderId = true)
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
@@ -114,7 +116,11 @@ internal fun ChatRecordMaterial(
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                 ) {
                     items(grouped, key = { it.message.id }) { item ->
-                        ChatMessageItemMaterial(item = item)
+                        ChatMessageItemMaterial(
+                            item = item,
+                            onFileClick = onFileClick,
+                            downloadingFileMsgId = item.message.msgId.takeIf { openingFile == item.message.id } ?: 0L,
+                        )
                     }
                 }
             }

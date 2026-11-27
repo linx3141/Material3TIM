@@ -36,6 +36,7 @@ class SettingsViewModel(
                     themeMode = repo.themeMode,
                     miuixMonet = repo.miuixMonet,
                     keyColor = repo.keyColor,
+                    followSystem = repo.followSystem,
                     colorStyle = repo.colorStyle,
                     colorSpec = repo.colorSpec,
                     enablePredictiveBack = repo.enablePredictiveBack,
@@ -116,7 +117,14 @@ class SettingsViewModel(
 
     fun setKeyColor(color: Int) {
         repo.keyColor = color
-        _uiState.update { it.copy(keyColor = color) }
+        // 选自定义颜色即退出“跟随系统”，否则开关会把用户选择覆盖掉。
+        if (color != 0) repo.followSystem = false
+        _uiState.update { it.copy(keyColor = color, followSystem = if (color != 0) false else it.followSystem) }
+    }
+
+    fun setFollowSystem(enabled: Boolean) {
+        repo.followSystem = enabled
+        _uiState.update { it.copy(followSystem = enabled) }
     }
 
     fun setColorStyle(style: String) {

@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -102,6 +104,7 @@ internal fun ContactDetailMaterial(
     isProfileLoadFailed: Boolean = false,
     onRetryProfile: () -> Unit = {},
     onAddFriend: () -> Unit = {},
+    onOpenQZone: () -> Unit = {},
     manageRole: GroupMemberRole? = null,
     manageTarget: ChatMember? = null,
     manageChatId: String = "",
@@ -249,6 +252,27 @@ internal fun ContactDetailMaterial(
                                 },
                             )
                         }
+                    }
+                }
+            }
+            if (!isSelfProfile) item(key = "qzone") {
+                SegmentedColumn {
+                    item {
+                        SegmentedListItem(
+                            onClick = onOpenQZone,
+                            leadingContent = {
+                                Icon(Icons.Filled.Public, contentDescription = null)
+                            },
+                            headlineContent = {
+                                Text(stringResource(R.string.contact_qzone))
+                            },
+                            trailingContent = {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                )
+                            },
+                        )
                     }
                 }
             }

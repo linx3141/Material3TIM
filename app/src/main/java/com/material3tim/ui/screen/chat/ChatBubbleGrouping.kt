@@ -6,6 +6,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.material3tim.data.model.ChatMessage
 import com.material3tim.data.model.ChatMessageType
+import com.material3tim.data.model.sameKnownSender
 
 /**
  * 连续消息分组的位置。圆角由 [chatBubbleShape] 按“对齐边小圆角、参差边大圆角”的规则计算：
@@ -53,18 +54,21 @@ private val ChatTimeRegex = Regex("""^(\d{1,2}):(\d{2})$""")
  * 把按时间正序排列的消息列表切分成视觉分组，并算好每条气泡的形状位置和间距。
  *
  * 分组规则（任一条件成立即开启新组）：
- * 1. 发送者变化（`isMe` 不同；对方消息还要求 `senderName` 相同）；
+ * 1. 发送者变化（优先比较 UID/QQ 号；仅普通聊天允许无标识时按昵称回退）；
  * 2. 当前或上一条是 [ChatMessageType.SYSTEM]；
  * 3. 当前消息带时间分隔条（`timeSeparator != null`）；
  * 4. 两条消息的 "HH:mm" 时间差 >= 5 分钟（跨天 / 无法解析时按解析结果决定：
  *    无法解析时不在时间维度上拆组）。
  */
-internal fun groupChatMessages(messages: List<ChatMessage>): List<GroupedChatMessage> {
+internal fun groupChatMessages(
+    messages: List<ChatMessage>,
+    requireSenderId: Boolean = false,
+): List<GroupedChatMessage> {
     if (messages.isEmpty()) return emptyList()
 
     val startsNewGroup = BooleanArray(messages.size) { true }
     for (index in 1 until messages.size) {
-        startsNewGroup[index] = isNewGroupBetween(messages[index - 1], messages[index])
+        startsNewGroup[index] = isNewGroupBetween(messages[index - 1], messages[index], requireSenderId)
     }
 
     val result = ArrayList<GroupedChatMessage>(messages.size)
@@ -151,11 +155,13 @@ internal fun parseChatTimeMinutes(timeLabel: String): Int? {
     return hour * 60 + minute
 }
 
-private fun isNewGroupBetween(previous: ChatMessage, current: ChatMessage): Boolean {
+private fun isNewGroupBetween(previous: ChatMessage, current: ChatMessage, requireSenderId: Boolean): Boolean {
     if (previous.type == ChatMessageType.SYSTEM || current.type == ChatMessageType.SYSTEM) return true
     if (current.timeSeparator != null) return true
     if (previous.isMe != current.isMe) return true
-    if (!current.isMe && previous.senderName != current.senderName) return true
+    val sameSender = sameKnownSender(previous, current)
+    if (sameSender == false || (requireSenderId && sameSender != true)) return true
+    if (sameSender == null && !current.isMe && previous.senderName != current.senderName) return true
 
     val previousMinutes = parseChatTimeMinutes(previous.timeLabel) ?: return false
     val currentMinutes = parseChatTimeMinutes(current.timeLabel) ?: return false

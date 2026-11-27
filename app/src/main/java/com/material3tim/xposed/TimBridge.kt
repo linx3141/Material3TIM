@@ -32,6 +32,14 @@ import com.material3tim.data.model.GroupFilePage
 import com.material3tim.data.model.GroupMemberRole
 import com.material3tim.data.model.GroupNotice
 import com.material3tim.data.model.UserProfile
+import com.material3tim.data.model.ForwardedFile
+import com.material3tim.data.model.ForwardedFilePeer
+import com.material3tim.data.model.forwardedFileTargets
+import com.material3tim.data.model.forwardedMessageRowId
+import com.material3tim.data.model.forwardedSenderName
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
 import com.material3tim.data.repository.LiveChats
 import com.material3tim.data.repository.formatChatTimeLabel
 import com.material3tim.data.source.AddFriendSource
@@ -2662,7 +2670,7 @@ internal object TimBridge {
             if (msgId != 0L && !ids.contains(msgId)) ids.add(msgId)
         }
         // 新消息 → 系统通知（后台/其它会话才提醒；只入队，不阻塞内核回调线程）。
-        if (kind == MessageEvent.Kind.NEW) {
+        if (kind == MessageEvent.Kind.NEW && methodName != "onAddSendMsg") {
             records.forEach { record ->
                 val chatId = runCatching { chatIdForMsgRecord(record) }.getOrNull()
                 if (chatId != null) enqueueMessageNotification(chatId, record)
@@ -2769,6 +2777,15 @@ internal object TimBridge {
             TAG,
             "richmedia complete: msg=$msgId elem=$elementId err=$errCode downType=$downType path=${rawPath?.take(80)}",
         )
+        if (downType in 0..1 && elementId != 0L) {
+            forwardedFileTransfers[msgId to elementId]?.let { transfer ->
+                if (errCode == 0L && completeFilePath(rawPath, transfer.size)) {
+                    transfer.path.complete(rawPath)
+                } else if (errCode != 0L) {
+                    transfer.path.complete(null)
+                }
+            }
+        }
         if (errCode == 0L && !rawPath.isNullOrBlank() && pathUsable(rawPath) && elementId != 0L) {
             downloadedMediaByElement[elementId] = rawPath
         }
@@ -2812,6 +2829,9 @@ internal object TimBridge {
             (progress * 100L / totalSize).toInt().coerceIn(0, 100)
         } else {
             progress.toInt().coerceIn(0, 100)
+        }
+        if (elementId != 0L && (progress > 0L || totalSize > 0L)) {
+            forwardedFileTransfers[msgId to elementId]?.started?.complete(Unit)
         }
         val old = if (elementId != 0L) {
             richMediaProgressByElement.put(elementId, pct)
@@ -4915,68 +4935,55 @@ internal object TimBridge {
         val mime = android.webkit.MimeTypeMap.getSingleton()
             .getMimeTypeFromExtension(extension) ?: "*/*"
         return runCatching {
-            var uri: android.net.Uri? = null
-            var usedAuthority = ""
-            // 优先用 TIM 自己的 FileProvider7Helper（内部用 TIM 的 FileProvider 类与
-            // authority = packageName + ".fileprovider"，避免直接反射 androidx 类时
-            // 命中模块自带/被 R8 重命名的类导致 ClassNotFoundException）。
-            runCatching {
-                val helperClass = Class.forName(
-                    "com.tencent.mobileqq.utils.kapalaiadapter.FileProvider7Helper",
-                    false, cl,
-                )
-                val method = helperClass.methods.firstOrNull {
-                    it.name == "getUriForFile" && it.parameterCount == 2 &&
-                        it.parameterTypes[0] == Context::class.java &&
-                        it.parameterTypes[1] == java.io.File::class.java
-                } ?: return@runCatching
-                val candidate = method.invoke(null, context, file) as? android.net.Uri
-                if (candidate != null) {
-                    uri = candidate
-                    usedAuthority = "FileProvider7Helper"
-                }
-            }
-            if (uri == null) {
-                val fileProviderClass = Class.forName("androidx.core.content.FileProvider", false, cl)
-                val getUriForFile = fileProviderClass.getMethod(
-                    "getUriForFile",
-                    Context::class.java,
-                    String::class.java,
-                    java.io.File::class.java,
-                )
-                for (authority in listOf(
-                    "com.tencent.tim.fileprovider",
-                    "com.tencent.tim.external.fileprovider",
-                )) {
-                    val candidate = runCatching {
-                        getUriForFile.invoke(null, context, authority, file) as? android.net.Uri
-                    }.getOrNull()
-                    if (candidate != null) {
-                        uri = candidate
-                        usedAuthority = authority
-                        break
-                    }
-                }
-            }
-            if (uri == null) {
-                Log.w(TAG, "fileOpen: FileProvider.getUriForFile failed name=${file.name}")
-                return false
-            }
+            val uri = hostFileUri(context, cl, file) ?: return false
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, mime)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
-            Log.i(
-                TAG,
-                "fileOpen: ok name=${file.name} mime=$mime authority=$usedAuthority",
-            )
+            Log.i(TAG, "fileOpen: ok name=${file.name} mime=$mime authority=${uri.authority}")
             true
         }.getOrElse { t ->
             Log.w(TAG, "fileOpen: open failed name=${file.name}: ${t.javaClass.simpleName} ${t.message}")
             false
         }
+    }
+
+    internal fun hostFileUri(context: Context, cl: ClassLoader, file: java.io.File): android.net.Uri? {
+        // 优先用 TIM 自己的 FileProvider7Helper（内部用 TIM 的 FileProvider 类与
+        // authority = packageName + ".fileprovider"，避免直接反射 androidx 类时
+        // 命中模块自带/被 R8 重命名的类导致 ClassNotFoundException）。
+        val primary = runCatching {
+            val helperClass = Class.forName(
+                "com.tencent.mobileqq.utils.kapalaiadapter.FileProvider7Helper",
+                false, cl,
+            )
+            val method = helperClass.methods.firstOrNull {
+                it.name == "getUriForFile" && it.parameterCount == 2 &&
+                    it.parameterTypes[0] == Context::class.java &&
+                    it.parameterTypes[1] == java.io.File::class.java
+            } ?: return@runCatching null
+            method.invoke(null, context, file) as? android.net.Uri
+        }.getOrNull()
+        if (primary != null) return primary
+        return runCatching {
+            val fileProviderClass = Class.forName("androidx.core.content.FileProvider", false, cl)
+            val getUriForFile = fileProviderClass.getMethod(
+                "getUriForFile",
+                Context::class.java,
+                String::class.java,
+                java.io.File::class.java,
+            )
+            listOf(
+                "com.tencent.tim.fileprovider",
+                "com.tencent.tim.external.fileprovider",
+            ).firstNotNullOfOrNull { authority ->
+                runCatching {
+                    getUriForFile.invoke(null, context, authority, file) as? android.net.Uri
+                }.getOrNull()
+            }
+        }.getOrNull()
     }
 
     /**
@@ -5193,7 +5200,7 @@ internal object TimBridge {
             Log.w(TAG, "openRedPacket: no context")
             return false
         }
-        val currentUin = currentWalletUin()
+        val currentUin = currentAccountUin()
         val currentNick = currentWalletNickName().ifBlank { currentUin }
         val peerUinStr = when {
             meta.peerUin != 0L -> meta.peerUin.toString()
@@ -5425,6 +5432,107 @@ internal object TimBridge {
         val ok = requestRichMediaElementDownload(chatId, msgId, elementId)
         Log.i(TAG, "fileDownload: start msg=$msgId elem=$elementId ok=$ok")
         return ok
+    }
+
+    private class ForwardedFileTransfer(val size: Long) {
+        val path = CompletableDeferred<String?>()
+        val started = CompletableDeferred<Unit>()
+    }
+
+    private val forwardedFileTransfers = ConcurrentHashMap<Pair<Long, Long>, ForwardedFileTransfer>()
+    private val forwardedFilePaths = object : LinkedHashMap<ForwardedFile, String>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ForwardedFile, String>?): Boolean = size > 64
+    }
+
+    private fun completeFilePath(path: String?, expectedSize: Long): Boolean =
+        !path.isNullOrBlank() && java.io.File(path).let {
+            it.isFile && it.length() > 0L && (expectedSize <= 0L || it.length() == expectedSize)
+        }
+
+    private fun forwardedFileElement(record: Any, elementId: Long): Any? {
+        val elements = invokeGetter(record, "getElements") as? List<*> ?: return null
+        return elements.mapNotNull { element ->
+            element ?: return@mapNotNull null
+            val id = (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L
+            if (id != elementId) return@mapNotNull null
+            invokeGetter(element, "getFileElement")
+        }.singleOrNull()
+    }
+
+    private fun completedForwardedElementPath(element: Any): String? {
+        val size = (invokeGetter(element, "getFileSize") as? Number)?.toLong() ?: 0L
+        return (invokeGetter(element, "getFilePath") as? String)?.takeIf { completeFilePath(it, size) }
+    }
+
+    /** 只处理用户点中的转发文件；原始消息从记录缓存取，不查询外层普通聊天。 */
+    suspend fun downloadForwardedFile(file: ForwardedFile): String? {
+        if (!isHost) return null
+        val index = file.rowIndex ?: return null
+        return try {
+            synchronized(forwardedFilePaths) { forwardedFilePaths[file] }
+                ?.takeIf { completeFilePath(it, 0L) }?.let { return it }
+            val key = chatRecordCacheKey(
+                file.chatId, file.recordMsgId, file.recordElementId, file.parentMsgId, file.rootMsgId,
+            )
+            if (chatRecordCacheGet(key) == null) {
+                loadChatRecord(file.chatId, file.recordMsgId, file.recordElementId, file.parentMsgId, file.rootMsgId)
+            }
+            val record = chatRecordCacheGet(key)?.first?.getOrNull(index) ?: return null
+            val innerId = (invokeGetter(record, "getMsgId") as? Number)?.toLong() ?: 0L
+            if (innerId != file.messageId) return null
+            val element = forwardedFileElement(record, file.elementId) ?: return null
+            completedForwardedElementPath(element)?.let { return it }
+            if (file.elementId == 0L || !ensureServices()) return null
+            val service = msgService ?: return null
+            val method = resolveKernelMethod(service, "getRichMediaElement", 1) ?: return null
+            val cl = hostClassLoader() ?: return null
+            val peer = (invokeGetter(record, "getPeerUid") as? String).orEmpty()
+            val chatType = (invokeGetter(record, "getChatType") as? Number)?.toInt() ?: 0
+            val meta = chatMeta[file.chatId]
+            val candidates = forwardedFileTargets(
+                file, ForwardedFilePeer(peer, chatType), meta?.let { ForwardedFilePeer(it.peerUid, it.chatType) },
+            )
+            val size = (invokeGetter(element, "getFileSize") as? Number)?.toLong() ?: 0L
+            for (target in candidates) {
+                val keyPair = target.msgId to file.elementId
+                val transfer = ForwardedFileTransfer(size)
+                if (forwardedFileTransfers.putIfAbsent(keyPair, transfer) != null) continue
+                try {
+                    val request = buildRichMediaElementGetReq(
+                        cl, target.peer.uid, target.peer.chatType, target.msgId, file.elementId,
+                        downloadType = 1, thumbSize = 0, downSourceType = 0, triggerType = 0,
+                    ) ?: continue
+                    if (runCatching { method.second.invoke(method.first, request) }.isFailure) continue
+                    Log.i(TAG, "fileRecord: requested msg=${target.msgId} elem=${file.elementId}")
+                    // 未收到回调才尝试备用上下文；已开始传输则等待路径或错误，不并行重复下载。
+                    val started = withTimeoutOrNull(5_000L) {
+                        select {
+                            transfer.path.onAwait { false }
+                            transfer.started.onAwait { true }
+                        }
+                    } == true
+                    val path = if (started) {
+                        withTimeoutOrNull(120_000L) { transfer.path.await() }
+                    } else if (transfer.path.isCompleted) {
+                        transfer.path.await()
+                    } else null
+                    if (path != null) {
+                        synchronized(forwardedFilePaths) { forwardedFilePaths[file] = path }
+                        return path
+                    }
+                    // 已有传输时不启动其它上下文的重复下载。
+                    if (started && !transfer.path.isCompleted) return null
+                } finally {
+                    forwardedFileTransfers.remove(keyPair, transfer)
+                }
+            }
+            null
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (t: Throwable) {
+            Log.w(TAG, "fileRecord: download failed: ${t.javaClass.simpleName} ${t.message}")
+            null
+        }
     }
 
     /** FileElement 的下载状态快照（progress 内核值基本只有 0/100，字节进度靠扫临时文件）。 */
@@ -7451,7 +7559,11 @@ internal object TimBridge {
         return rawAtType to false
     }
 
-    private fun mapMsgRecord(chatId: String, record: Any?): MappedMessage? = try {
+    private fun mapMsgRecord(
+        chatId: String,
+        record: Any?,
+        forwardedIndex: Int? = null,
+    ): MappedMessage? = try {
         if (record == null) return null
         val meta = chatMeta[chatId]
         val msgId = (invokeGetter(record, "getMsgId") as? Number)?.toLong() ?: 0L
@@ -7460,10 +7572,18 @@ internal object TimBridge {
         val senderUin = (invokeGetter(record, "getSenderUin") as? Number)?.toLong() ?: 0L
         val isMe = (myUid != null && senderUid == myUid) ||
             (senderUin != 0L && senderUin.toString() == myUin)
-        val senderName = if (isMe) {
-            "我"
-        } else {
-            listOf(
+        val senderName = when {
+            forwardedIndex != null -> forwardedSenderName(
+                nickname = invokeGetter(record, "getSendNickName") as? String,
+                memberName = invokeGetter(record, "getSendMemberName") as? String,
+                remark = invokeGetter(record, "getSendRemarkName") as? String,
+                uin = senderUin,
+                unknown = runCatching {
+                    AppEnvironment.context.getString(com.material3tim.R.string.chat_search_unknown_sender)
+                }.getOrDefault("未知发送者"),
+            )
+            isMe -> "我"
+            else -> listOf(
                 invokeGetter(record, "getSendRemarkName") as? String,
                 invokeGetter(record, "getSendMemberName") as? String,
                 invokeGetter(record, "getSendNickName") as? String,
@@ -7486,6 +7606,7 @@ internal object TimBridge {
         val timeLabel = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timeMillis))
         val isGroup = meta?.isGroup == true
         val senderAvatarPath = when {
+            forwardedIndex != null -> memberAvatarPath(senderUid, senderUin)
             isMe -> selfAvatarPath()
             isGroup -> memberAvatarPath(senderUid, senderUin)
             else -> meta?.let { chatAvatarPath(it) }
@@ -7503,11 +7624,16 @@ internal object TimBridge {
             requestPttDownload(record, msgId, described.elementId)
         }
         val message = ChatMessage(
-            id = "tim_${msgId}",
+            // 转发内层 msgId 可能重复或为 0，不能作为 Compose 列表行的唯一键。
+            id = forwardedIndex?.let { forwardedMessageRowId(it, msgId) } ?: "tim_$msgId",
             chatId = chatId,
             seq = recordSeq,
             senderName = senderName,
-            senderSeed = ((senderUin xor (senderUin ushr 32)).toInt() and 0x7fffffff),
+            senderSeed = if (forwardedIndex != null && senderUin == 0L) {
+                (senderUid.ifBlank { senderName }).hashCode() and Int.MAX_VALUE
+            } else {
+                (senderUin xor (senderUin ushr 32)).toInt() and Int.MAX_VALUE
+            },
             isMe = isMe,
             atMe = atMe,
             type = described.type,
@@ -7516,13 +7642,16 @@ internal object TimBridge {
             isRead = true,
             voiceSeconds = described.voiceSeconds,
             fileSize = described.fileSize,
-            showSenderName = isGroup && !isMe,
+            showSenderName = forwardedIndex != null || (isGroup && !isMe),
             senderAvatarPath = senderAvatarPath,
             imagePath = described.imagePath,
             imageWidth = described.imageWidth,
             imageHeight = described.imageHeight,
             isEmojiImage = described.emojiImage,
-            mediaPath = described.mediaPath,
+            // 转发附件不能从全局仅按 elementId 的媒体缓存取路径（可能是另一条消息的文件）。
+            mediaPath = if (forwardedIndex != null && described.type == ChatMessageType.FILE) {
+                forwardedFileElement(record, described.elementId)?.let(::completedForwardedElementPath)
+            } else described.mediaPath,
             timeSeparator = null,
             timestampMs = timeMillis,
             chatRecordTitle = described.recordTitle,
@@ -8302,7 +8431,7 @@ internal object TimBridge {
     }
 
     /** 当前账号 uin（红包 PayBridge json 的 userId/groupId 用）。优先内核初始化时缓存的 myUin。 */
-    private fun currentWalletUin(): String {
+    internal fun currentAccountUin(): String {
         myUin?.takeIf { it.isNotBlank() }?.let { return it }
         return runCatching {
             val cl = hostClassLoader() ?: return@runCatching ""
@@ -12112,8 +12241,8 @@ internal object TimBridge {
 
     /** 原始 MsgRecord → ChatMessage（按时间排序 + 回复预览解析）。 */
     private fun mapChatRecordMessages(chatId: String, raw: List<Any?>): List<ChatMessage> {
-        val mapped = raw.mapNotNull { record ->
-            mapMsgRecord(chatId, record)?.let { it.timeMillis to it.message }
+        val mapped = raw.mapIndexedNotNull { index, record ->
+            mapMsgRecord(chatId, record, forwardedIndex = index)?.let { it.timeMillis to it.message }
         }
         val ordered = if (mapped.size >= 2 && mapped.first().first > mapped.last().first) {
             mapped.reversed()
@@ -19649,6 +19778,9 @@ internal object TimBridge {
     // ---------------------------------------------------------------------
 
     private const val NOTIFY_CHANNEL_ID = "m3tim_messages"
+    private const val NOTIFY_REPLY_REVISION = "com.material3tim.notification.REPLY_REVISION"
+    private val notificationUpdateLock = Any()
+    private val notificationReply = TimNotificationReply(::sendNotificationReply)
 
     private data class NotifyChatInfo(val name: String, val at: Long)
 
@@ -19666,8 +19798,8 @@ internal object TimBridge {
     /** 同一会话 1s 内多条新消息合并计数。 */
     private val notifyAggByChat = ConcurrentHashMap<String, NotifyAgg>()
 
-    /** 已发过通知的 msgId 去重（限长，避免内存增长）。 */
-    private val notifiedMsgIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+    /** 按内核消息 ID 和会话序号去重；保留最近条目，不在达到上限时整表清空。 */
+    private val notificationDedupe = NotificationDeduplication()
 
     private val notifyExecutor =
         java.util.concurrent.Executors.newSingleThreadExecutor { r ->
@@ -19920,11 +20052,6 @@ internal object TimBridge {
     /** push 线程只做入队；真正判断/发通知在单线程 executor 里（可安全阻塞查会话缓存）。 */
     private fun enqueueMessageNotification(chatId: String, record: Any?) {
         if (chatId.isBlank() || record == null) return
-        val msgId = (invokeGetter(record, "getMsgId") as? Number)?.toLong() ?: 0L
-        if (msgId != 0L) {
-            if (!notifiedMsgIds.add(msgId)) return
-            if (notifiedMsgIds.size > 500) notifiedMsgIds.clear()
-        }
         runCatching {
             notifyExecutor.execute {
                 runCatching { maybePostMessageNotification(chatId, record) }
@@ -19935,7 +20062,112 @@ internal object TimBridge {
         }.onFailure { Log.w(TAG, "notify: enqueue failed: ${it.javaClass.simpleName} ${it.message}") }
     }
 
-    private fun maybePostMessageNotification(chatId: String, record: Any?) {
+    private fun chatNotificationTag(chatId: String): String = "m3tim_$chatId"
+
+    // 不读 myUin 缓存：旧通知在切换 TIM 账号后不能替新账号发送。
+    private fun notificationReplyAccount(): String? {
+        val runtime = appRuntime() ?: return null
+        return sequenceOf("getCurrentAccountUin", "getCurrentUin")
+            .mapNotNull { invokeGetter(runtime, it) as? String }
+            .firstOrNull { (it.toLongOrNull() ?: 0L) > 0L }
+    }
+
+    private fun notificationReplyLabel(resId: Int): String? =
+        runCatching { AppEnvironment.context.getString(resId) }.getOrNull()
+
+    /** 新会话可能早于最近列表刷新，直接用通知来源记录里的联系人。 */
+    private fun prepareNotificationReplyContact(chatId: String, record: Any?): Boolean {
+        record ?: return false
+        val chatType = (invokeGetter(record, "getChatType") as? Number)?.toInt() ?: return false
+        if (chatType != 1 && chatType != 2) return false
+        if (contacts.containsKey(chatId)) return true
+        val peerUid = (invokeGetter(record, "getPeerUid") as? String).orEmpty().ifBlank {
+            if (chatType != 2) return false
+            val groupUin = (invokeGetter(record, "getPeerUin") as? Number)?.toLong() ?: return false
+            if (groupUin <= 0L) return false
+            groupUin.toString()
+        }
+        val cl = hostClassLoader() ?: return false
+        val contact = buildKernelContact(cl, chatType, peerUid) ?: return false
+        contacts.putIfAbsent(chatId, contact)
+        return true
+    }
+
+    /** 接收器在后台工作线程调用。成功后仅撤下提交回复时看到的那条通知。 */
+    private fun sendNotificationReply(
+        context: Context,
+        chatId: String,
+        account: String,
+        token: android.app.PendingIntent,
+        text: String?,
+    ) {
+        if (notificationReplyAccount() != account) return
+        val manager = context.getSystemService(android.app.NotificationManager::class.java) ?: return
+        val tag = chatNotificationTag(chatId)
+        val id = chatId.hashCode()
+        fun activeNotice(): android.app.Notification? = manager.activeNotifications.firstOrNull {
+            it.tag == tag && it.id == id && it.notification.channelId == NOTIFY_CHANNEL_ID &&
+                it.notification.actions?.any { action -> action.actionIntent == token } == true
+        }?.notification
+
+        val revision = activeNotice()?.extras?.getString(NOTIFY_REPLY_REVISION) ?: return
+        val sent = text != null && sendTextMessage(chatId, text)
+        synchronized(notificationUpdateLock) {
+            val active = activeNotice() ?: return@synchronized
+            // 回复期间如果收到了新消息或已经进入会话，不覆盖/复活原通知。
+            if (active.extras.getString(NOTIFY_REPLY_REVISION) != revision) return@synchronized
+            if (sent) {
+                notifyAggByChat.remove(chatId)
+                manager.cancel(tag, id)
+            } else {
+                val error = notificationReplyLabel(
+                    if (text == null) com.material3tim.R.string.chat_notification_reply_invalid
+                    else com.material3tim.R.string.chat_notification_reply_unconfirmed,
+                ) ?: return@synchronized
+                val updated = android.app.Notification.Builder.recoverBuilder(context, active)
+                    .setSubText(error)
+                    .setOnlyAlertOnce(true)
+                    .build()
+                manager.notify(tag, id, updated)
+            }
+        }
+    }
+
+    fun dismissChatNotification(chatId: String) {
+        if (chatId.isBlank()) return
+        runCatching {
+            // 清理与发送走同一队列，避免清理之后又发出进入聊天之前排队的通知。
+            notifyExecutor.execute {
+                runCatching dismiss@{
+                    val manager = notifyContext()?.getSystemService(android.app.NotificationManager::class.java)
+                        ?: return@dismiss
+                    synchronized(notificationUpdateLock) {
+                        notifyAggByChat.remove(chatId)
+                        val tag = chatNotificationTag(chatId)
+                        val id = chatId.hashCode()
+                        manager.cancel(tag, id)
+                        // 兼容旧版本未设 tag 的通知；核对频道和组，不碰 TIM 原生或别的会话。
+                        val hasLegacyNotification = manager.activeNotifications.any {
+                            it.tag == null && it.id == id &&
+                                it.notification.channelId == NOTIFY_CHANNEL_ID && it.notification.group == tag
+                        }
+                        if (hasLegacyNotification) manager.cancel(id)
+                    }
+                }.onFailure { Log.w(TAG, "notify: dismiss failed chat=$chatId", it) }
+            }
+        }.onFailure { Log.w(TAG, "notify: dismiss enqueue failed chat=$chatId", it) }
+    }
+
+    private fun maybePostMessageNotification(chatId: String, record: Any) {
+        val account = notificationReplyAccount()
+        val msgId = (invokeGetter(record, "getMsgId") as? Number)?.toLong() ?: 0L
+        val seq = (invokeGetter(record, "getMsgSeq") as? Number)?.toLong() ?: 0L
+        val type = (invokeGetter(record, "getChatType") as? Number)?.toInt() ?: 0
+        val peerUin = (invokeGetter(record, "getPeerUin") as? Number)?.toLong() ?: 0L
+        // 优先使用两种回调都可能带的 QQ 号/群号来比较序号，避免 peerUid 有无造成不同键。
+        val conversation = if (peerUin > 0L && type > 0) "$type:$peerUin" else chatId
+        val notifySeq = seq.takeIf { type == 1 || type == 2 } ?: 0L
+        if (!notificationDedupe.accept(account.orEmpty(), conversation, msgId, notifySeq)) return
         // 前台且正在看该会话：不提醒。
         if (AppUiState.isForeground && AppUiState.currentChatId == chatId) {
             Log.i(TAG, "notify: skip chat=$chatId (foreground in this chat)")
@@ -19977,7 +20209,6 @@ internal object TimBridge {
         } else {
             1
         }
-        notifyAggByChat[chatId] = NotifyAgg(count, nowMs)
         val summaryText = if (count > 1) {
             "$count 条新消息（最近：${preview.sender}: ${preview.summary}）"
         } else {
@@ -19989,25 +20220,47 @@ internal object TimBridge {
             @Suppress("DEPRECATION")
             android.app.Notification.Builder(context)
         }
-        builder.setSmallIcon(android.R.drawable.stat_notify_chat)
-            .setContentTitle(info.name.take(40))
+        // 取 TIM 自己的应用图标，使用宿主包名解析，不能从模块隔离的资源表里取同号资源。
+        val host = context.applicationContext ?: context
+        val timIcon = host.applicationInfo.icon.takeIf { host.packageName == MainModule.TARGET_PACKAGE && it != 0 }
+            ?.let { android.graphics.drawable.Icon.createWithResource(host.packageName, it) }
+        if (timIcon != null) {
+            // 状态栏由系统单色渲染；通知中心也显示彩色 TIM 图标，便于辨认。
+            builder.setSmallIcon(timIcon).setLargeIcon(timIcon)
+        } else {
+            builder.setSmallIcon(android.R.drawable.stat_notify_chat)
+        }
+        builder.setContentTitle(info.name.take(40))
             .setContentText(summaryText)
             .setNumber(count)
             .setWhen(nowMs)
             .setShowWhen(true)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(false)
-            .setGroup("m3tim_$chatId")
+            // 保留每会话一个通知：首次提醒，后续更新内容和快捷回复，不再响铃、震动。
+            .setOnlyAlertOnce(true)
+            .setGroup(chatNotificationTag(chatId))
         // 每个会话一条独立通知，不用 group summary 标记（否则系统会当成摘要吞掉）。
         .setGroupSummary(false)
         notificationPendingIntent(context, chatId)?.let { builder.setContentIntent(it) }
+        val replyLabel = notificationReplyLabel(com.material3tim.R.string.chat_notification_reply)
+        if (account != null && replyLabel != null && prepareNotificationReplyContact(chatId, record)) {
+            notificationReply.createAction(context, chatId, account, replyLabel)?.let { action ->
+                builder.addAction(action)
+                builder.addExtras(android.os.Bundle().apply {
+                    putString(NOTIFY_REPLY_REVISION, java.util.UUID.randomUUID().toString())
+                })
+            }
+        }
         val notification = builder.build()
         runCatching {
-            manager.notify(chatId.hashCode(), notification)
+            synchronized(notificationUpdateLock) {
+                manager.notify(chatNotificationTag(chatId), chatId.hashCode(), notification)
+                notifyAggByChat[chatId] = NotifyAgg(count, nowMs)
+            }
             Log.i(
                 TAG,
-                "notify: post chat=$chatId title=${info.name.take(30)} body=$summaryText " +
-                    "count=$count id=${chatId.hashCode()} channel=$NOTIFY_CHANNEL_ID",
+                "notify: post chat=$chatId msg=$msgId count=$count " +
+                    "id=${chatId.hashCode()} channel=$NOTIFY_CHANNEL_ID",
             )
         }.onFailure { Log.w(TAG, "notify: notify() failed chat=$chatId: ${it.javaClass.simpleName} ${it.message}") }
     }
@@ -21142,6 +21395,8 @@ internal class TimChatSettingSource : ChatSettingSource {
     override fun setChatUnread(chatId: String, unread: Boolean): Boolean =
         TimBridge.setChatUnread(chatId, unread)
 
+    override fun dismissChatNotification(chatId: String) = TimBridge.dismissChatNotification(chatId)
+
     override fun deleteChat(chatId: String): Boolean = TimBridge.deleteChat(chatId)
 
     override fun searchChatMessages(chatId: String, keyword: String, limit: Int): List<ChatMessage>? =
@@ -21311,6 +21566,8 @@ internal class TimMessageSource : MessageSource {
         elementId: Long,
         knownPath: String?,
     ): Boolean = TimBridge.downloadAndOpenFile(chatId, msgId, elementId, knownPath)
+
+    override suspend fun downloadForwardedFile(file: ForwardedFile): String? = TimBridge.downloadForwardedFile(file)
 
     override fun openLocalFile(path: String): Boolean = TimBridge.openLocalFile(path)
 

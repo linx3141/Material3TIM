@@ -9,8 +9,9 @@ import com.material3tim.ui.UiMode
 data class SettingsUiState(
     val uiMode: String = UiMode.DEFAULT_VALUE,
     val themeMode: Int = 0,
-    val miuixMonet: Boolean = false,
+    val miuixMonet: Boolean = true,
     val keyColor: Int = 0,
+    val followSystem: Boolean = true,
     val colorStyle: String = PaletteStyle.TonalSpot.name,
     val colorSpec: String = ColorSpecVersion.SPEC_2025.name,
     val enablePredictiveBack: Boolean = false,
@@ -37,7 +38,12 @@ data class SettingsUiState(
 
 @Immutable
 data class SettingsScreenActions(
+    val onSyncTelegram: () -> Unit,
     val onOpenTheme: () -> Unit,
     val onSetUiModeIndex: (Int) -> Unit,
     val onOpenAbout: () -> Unit,
+    /** 打开 TIM 原生设置：用于访问 QAuxv 等模块注入的入口。 */
+    val onOpenTimSettings: () -> Unit,
+    /** 关闭 Material3TIM 界面并重启 TIM，回到原版界面。 */
+    val onReturnToOriginalTim: () -> Unit,
 )

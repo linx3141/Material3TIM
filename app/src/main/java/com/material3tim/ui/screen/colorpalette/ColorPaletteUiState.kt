@@ -20,6 +20,7 @@ data class ColorPaletteScreenActions(
     val onSetThemeMode: (Int) -> Unit,
     val onSetMiuixMonet: (Boolean) -> Unit,
     val onSetKeyColor: (Int) -> Unit,
+    val onSetFollowSystem: (Boolean) -> Unit,
     val onSetColorMode: (ColorMode) -> Unit,
     val onSetColorStyle: (String) -> Unit,
     val onSetColorSpec: (String) -> Unit,

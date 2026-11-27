@@ -9,6 +9,8 @@ interface SettingsRepository {
     var themeMode: Int
     var miuixMonet: Boolean
     var keyColor: Int
+    /** 是否让主题直接跟随系统 Material You 调色板（忽略自定义 keyColor/风格）。 */
+    var followSystem: Boolean
     var colorStyle: String
     var colorSpec: String
 

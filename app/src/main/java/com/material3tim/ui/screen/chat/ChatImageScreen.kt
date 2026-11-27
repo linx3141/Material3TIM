@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -45,13 +47,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
@@ -64,13 +67,13 @@ import com.material3tim.R
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.ui.component.AnimatedOrStaticImage
 import com.material3tim.ui.navigation3.LocalNavigator
+import com.material3tim.ui.navigation3.Route
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.math.abs
 
 /** 查看器解码像素预算：优先保留原始像素密度，仅超大图按 2 的幂降采样避免 OOM。 */
 private const val ViewerMaxDecodePixels = 12_000_000L
@@ -83,12 +86,28 @@ private const val ViewerHardMaxDecodePixels = 20_000_000L
  * - 双指缩放 / 拖动、双击放大（再次双击还原）、单击显隐顶栏；缩放/双击不会误触顶栏显隐。
  */
 @Composable
-fun ChatImageScreen(
-    imagePath: String,
-    chatId: String = "",
-    msgId: Long = 0L,
-    elementId: Long = 0L,
-) {
+fun ChatImageScreen(route: Route.ChatImage) {
+    val navigator = LocalNavigator.current
+    val gallery = remember(navigator, route) { navigator.chatImageGallery(route) }
+    if (gallery.pages.size == 1) {
+        ChatImagePage(gallery.pages[0], active = true)
+        return
+    }
+    val pagerState = rememberPagerState(initialPage = gallery.initialPage) { gallery.pages.size }
+    HorizontalPager(
+        state = pagerState,
+        modifier = Modifier.fillMaxSize().background(Color.Black),
+    ) { page ->
+        ChatImagePage(
+            image = gallery.pages[page],
+            active = pagerState.settledPage == page,
+        )
+    }
+}
+
+@Composable
+private fun ChatImagePage(image: Route.ChatImage, active: Boolean) {
+    val (imagePath, chatId, msgId, elementId) = image
     val navigator = LocalNavigator.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -112,16 +131,22 @@ fun ChatImageScreen(
         LocalConfiguration.current.screenWidthDp.dp.roundToPx()
     }
 
-    LaunchedEffect(chromeVisible) {
-        if (chromeVisible) {
+    LaunchedEffect(chromeVisible, active) {
+        if (chromeVisible && active) {
             delay(3000)
             chromeVisible = false
         }
     }
 
-    // 宿主 + 有 msgId/elementId 时后台拉原图；失败静默保持缩略图。
-    LaunchedEffect(imagePath, chatId, msgId, elementId) {
-        if (AppDataSources.messageSource == null) return@LaunchedEffect
+    // 仅停在该页后加载原图，避免快速翻页触发相邻图片的下载和大图解码。
+    LaunchedEffect(image, active) {
+        if (!active) {
+            scale = 1f
+            offset = Offset.Zero
+            originalLoading = false
+            return@LaunchedEffect
+        }
+        if (originalPath != null || AppDataSources.messageSource == null) return@LaunchedEffect
         if (chatId.isBlank() || msgId == 0L || elementId == 0L) return@LaunchedEffect
         originalLoading = true
         val loadedPath = withContext(Dispatchers.IO) {
@@ -147,101 +172,101 @@ fun ChatImageScreen(
         originalLoading = false
     }
 
-    // 切换原图时重置缩放/位移（沿用缩略图的缩放会看起来跳一下）；不闪黑，新图直接顶上。
-    LaunchedEffect(originalBitmap, originalAnimatedPath) {
-        if (originalBitmap != null || originalAnimatedPath != null) {
-            scale = 1f
-            offset = Offset.Zero
-        }
-    }
-
     val savePath = originalPath ?: imagePath
-    val imageModifier = Modifier
-        .fillMaxSize()
-        .pointerInput(imagePath) {
-            var lastTapUptime = 0L
-            var lastTapPos = Offset.Zero
-            var pendingSingleTap: Job? = null
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                var moved = false
-                var maxPointerCount = 1
-                var totalPan = Offset.Zero
-                while (true) {
-                    val event = awaitPointerEvent()
-                    val pressed = event.changes.filter { it.pressed }
-                    val zoom = event.calculateZoom()
-                    val pan = event.calculatePan()
-                    maxPointerCount = maxOf(maxPointerCount, pressed.size)
-                    totalPan += pan
-                    if (maxPointerCount > 1 || totalPan.getDistance() > 8f) moved = true
-                    // 每一帧都应用位移/缩放：保证放大后拖动严格 1:1 跟随手指。
-                    val newScale = (scale * zoom).coerceIn(1f, 6f)
-                    if (newScale <= 1.02f) {
+    val imageGestures = Modifier.pointerInput(image) {
+        var lastTapUptime = 0L
+        var lastTapPos = Offset.Zero
+        var pendingSingleTap: Job? = null
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            var moved = false
+            var transforming = scale > 1f
+            var totalPan = Offset.Zero
+            while (true) {
+                val event = awaitPointerEvent()
+                val pressed = event.changes.count { it.pressed }
+                val zoom = event.calculateZoom()
+                val pan = event.calculatePan()
+                transforming = transforming || pressed > 1
+                totalPan += pan
+                if (pressed > 1 || totalPan.getDistance() > viewConfiguration.touchSlop) moved = true
+                // 未放大时不要消费单指横划，交给 Pager；父层已开始滚动时不要判成点击。
+                if (!transforming) {
+                    if (awaitPointerEvent(PointerEventPass.Final).changes.any { it.isConsumed }) {
+                        return@awaitEachGesture
+                    }
+                    if (pressed == 0) break
+                    continue
+                }
+                // 每一帧都应用位移/缩放：保证放大后拖动严格 1:1 跟随手指。
+                val newScale = (scale * zoom).coerceIn(1f, 6f)
+                if (newScale == 1f) {
+                    scale = 1f
+                    offset = Offset.Zero
+                } else {
+                    scale = newScale
+                    val maxX = size.width * (scale - 1f) / 2f
+                    val maxY = size.height * (scale - 1f) / 2f
+                    offset = Offset(
+                        x = (offset.x + pan.x).coerceIn(-maxX, maxX),
+                        y = (offset.y + pan.y).coerceIn(-maxY, maxY),
+                    )
+                }
+                if (moved) {
+                    event.changes.forEach {
+                        if (it.positionChanged()) it.consume()
+                    }
+                }
+                if (pressed == 0) break
+            }
+            if (!moved) {
+                val now = System.currentTimeMillis()
+                val tapPos = down.position
+                val isDoubleTap = now - lastTapUptime < 320L &&
+                    (tapPos - lastTapPos).getDistance() < 100f
+                if (isDoubleTap) {
+                    pendingSingleTap?.cancel()
+                    pendingSingleTap = null
+                    lastTapUptime = 0L
+                    if (scale > 1.2f) {
                         scale = 1f
                         offset = Offset.Zero
                     } else {
-                        scale = newScale
-                        val maxX = size.width * (scale - 1f) / 2f
-                        val maxY = size.height * (scale - 1f) / 2f
+                        scale = 2.6f
                         offset = Offset(
-                            x = (offset.x + pan.x).coerceIn(-maxX, maxX),
-                            y = (offset.y + pan.y).coerceIn(-maxY, maxY),
+                            x = (scale - 1f) * (size.width / 2f - tapPos.x),
+                            y = (scale - 1f) * (size.height / 2f - tapPos.y),
                         )
                     }
-                    if (moved) {
-                        event.changes.forEach {
-                            if (it.positionChanged()) it.consume()
-                        }
-                    }
-                    if (pressed.isEmpty()) break
-                }
-                if (!moved) {
-                    val now = System.currentTimeMillis()
-                    val tapPos = down.position
-                    val isDoubleTap = now - lastTapUptime < 320L &&
-                        (tapPos - lastTapPos).getDistance() < 100f
-                    if (isDoubleTap) {
-                        pendingSingleTap?.cancel()
-                        pendingSingleTap = null
-                        lastTapUptime = 0L
-                        if (scale > 1.2f) {
-                            scale = 1f
-                            offset = Offset.Zero
-                        } else {
-                            scale = 2.6f
-                            offset = Offset(
-                                x = (scale - 1f) * (size.width / 2f - tapPos.x),
-                                y = (scale - 1f) * (size.height / 2f - tapPos.y),
-                            )
-                        }
-                        chromeVisible = true
-                    } else {
-                        lastTapUptime = now
-                        lastTapPos = tapPos
-                        val expected = now
-                        pendingSingleTap?.cancel()
-                        pendingSingleTap = scope.launch {
-                            delay(320L)
-                            if (lastTapUptime == expected) {
-                                chromeVisible = !chromeVisible
-                            }
+                    chromeVisible = true
+                } else {
+                    lastTapUptime = now
+                    lastTapPos = tapPos
+                    val expected = now
+                    pendingSingleTap?.cancel()
+                    pendingSingleTap = scope.launch {
+                        delay(320L)
+                        if (lastTapUptime == expected) {
+                            chromeVisible = !chromeVisible
                         }
                     }
                 }
             }
         }
-        .graphicsLayer(
-            scaleX = scale,
-            scaleY = scale,
-            translationX = offset.x,
-            translationY = offset.y,
-        )
+    }
+    val imageModifier = Modifier.fillMaxSize().graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+        translationX = offset.x
+        translationY = offset.y
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .clipToBounds()
+            .background(Color.Black)
+            .then(imageGestures),
     ) {
         val original = originalBitmap
         val animatedOriginal = originalAnimatedPath
@@ -284,7 +309,7 @@ fun ChatImageScreen(
 
         // 悬浮顶栏：不参与布局，显隐时图片不移动
         AnimatedVisibility(
-            visible = chromeVisible,
+            visible = active && chromeVisible,
             enter = fadeIn() + slideInVertically { -it },
             exit = fadeOut() + slideOutVertically { -it },
             modifier = Modifier.align(Alignment.TopCenter),

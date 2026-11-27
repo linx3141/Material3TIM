@@ -28,6 +28,7 @@ fun MaterialM3TimTheme(
         isAmoled = amoledMode,
         paletteStyle = appSettings.paletteStyle,
         colorSpec = appSettings.colorSpec,
+        followSystem = appSettings.followSystem,
     )
 
     LaunchedEffect(darkTheme) {

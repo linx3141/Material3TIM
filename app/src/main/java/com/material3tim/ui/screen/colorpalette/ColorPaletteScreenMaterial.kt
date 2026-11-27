@@ -55,6 +55,7 @@ import androidx.compose.material.icons.rounded.Pin
 import androidx.compose.material.icons.rounded.Style
 import androidx.compose.material.icons.rounded.Swipe
 import androidx.compose.material.icons.rounded.ViewCarousel
+import androidx.compose.material.icons.rounded.Wallpaper
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
@@ -143,6 +144,24 @@ fun ColorPaletteScreenMaterial(
                     isAmoled = isAmoled,
                     paletteStyle = colorStyle,
                     colorSpec = colorSpec,
+                    followSystem = uiState.followSystem,
+                )
+            }
+
+            item {
+                SegmentedColumn(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    content = listOf(
+                        {
+                            SegmentedSwitchItem(
+                                icon = Icons.Rounded.Wallpaper,
+                                title = stringResource(id = R.string.settings_follow_system),
+                                summary = stringResource(id = R.string.settings_follow_system_summary),
+                                checked = uiState.followSystem,
+                                onCheckedChange = actions.onSetFollowSystem,
+                            )
+                        }
+                    )
                 )
             }
 
@@ -155,13 +174,14 @@ fun ColorPaletteScreenMaterial(
                     item {
                         ColorButtonMaterial(
                             color = Color.Unspecified,
-                            isSelected = currentKeyColor == 0,
+                            isSelected = uiState.followSystem,
                             isDark = isDark,
                             isAmoled = isAmoled,
                             paletteStyle = colorStyle,
                             colorSpec = colorSpec,
+                            followSystem = true,
                             onClick = {
-                                actions.onSetKeyColor(0)
+                                actions.onSetFollowSystem(true)
                             }
                         )
                     }
@@ -169,11 +189,12 @@ fun ColorPaletteScreenMaterial(
                     items(keyColorOptions) { color ->
                         ColorButtonMaterial(
                             color = Color(color),
-                            isSelected = currentKeyColor == color,
+                            isSelected = !uiState.followSystem && currentKeyColor == color,
                             isDark = isDark,
                             isAmoled = isAmoled,
                             paletteStyle = colorStyle,
                             colorSpec = colorSpec,
+                            followSystem = false,
                             onClick = {
                                 actions.onSetKeyColor(color)
                             }
@@ -424,6 +445,7 @@ private fun ThemePreviewCard(
     isAmoled: Boolean = false,
     paletteStyle: PaletteStyle = PaletteStyle.TonalSpot,
     colorSpec: ColorSpecVersion = ColorSpecVersion.SPEC_2025,
+    followSystem: Boolean = false,
 ) {
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp.toFloat()
@@ -437,6 +459,7 @@ private fun ThemePreviewCard(
         isAmoled = isAmoled,
         paletteStyle = paletteStyle,
         colorSpec = colorSpec,
+        followSystem = followSystem,
     )
 
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
@@ -553,6 +576,7 @@ private fun ColorButtonMaterial(
     isAmoled: Boolean = false,
     paletteStyle: PaletteStyle = PaletteStyle.TonalSpot,
     colorSpec: ColorSpecVersion = ColorSpecVersion.SPEC_2025,
+    followSystem: Boolean = false,
     onClick: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -562,6 +586,7 @@ private fun ColorButtonMaterial(
         isAmoled = isAmoled,
         paletteStyle = paletteStyle,
         colorSpec = colorSpec,
+        followSystem = followSystem,
     )
 
     Surface(

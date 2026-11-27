@@ -24,6 +24,11 @@ import com.material3tim.ui.navigation3.LocalNavigator
 @Composable
 fun FilesScreen() {
     val navigator = LocalNavigator.current
+    val native = com.material3tim.data.source.AppDataSources.personalLibrary
+    if (native != null) {
+        OpenNativeLibraryPage(onOpen = native::openFiles, onReturn = { navigator.pop() })
+        return
+    }
     when (LocalUiMode.current) {
         UiMode.Miuix -> FilesMiuix(onBack = { navigator.pop() })
         UiMode.Material -> FilesMaterial(onBack = { navigator.pop() })

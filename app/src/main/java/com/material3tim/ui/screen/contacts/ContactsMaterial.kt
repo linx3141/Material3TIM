@@ -79,6 +79,7 @@ fun ContactsPagerMaterial(
     searchText: String,
     onSearchTextChange: (String) -> Unit,
     bottomInnerPadding: Dp,
+    onAddFriend: () -> Unit,
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
     val listState = rememberLazyListState()
@@ -86,9 +87,6 @@ fun ContactsPagerMaterial(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val navigator = LocalNavigator.current
-    val onFeatureComingSoon: () -> Unit = {
-        Toast.makeText(context, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
-    }
     val searchResults = if (searchText.isBlank()) {
         emptyList()
     } else {
@@ -104,7 +102,7 @@ fun ContactsPagerMaterial(
                 onSearchTextChange = onSearchTextChange,
                 onClearClick = { onSearchTextChange("") },
                 actions = {
-                    IconButton(onClick = onFeatureComingSoon) {
+                    IconButton(onClick = onAddFriend) {
                         Icon(
                             imageVector = Icons.Filled.PersonAdd,
                             contentDescription = stringResource(R.string.contacts_add_friend),

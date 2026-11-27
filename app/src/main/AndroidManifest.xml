@@ -4,8 +4,22 @@
 
     <!-- 后续步骤（Xposed 宿主注入 / 模块管理页面）可能用到；当前 UI 原型不需要联网 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 扫一扫：应用内 CameraX 预览（扫码框），不再拉起系统相机 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
 
     <uses-sdk tools:overrideLibrary="top.yukonga.miuix.kmp.blur" />
+
+    <!-- Android 11+ 包可见性：SpeechRecognizer 需要能发现系统识别服务 -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <application
         android:name=".M3TimApplication"
@@ -26,6 +40,19 @@
         <meta-data
             android:name="xposeddescription"
             android:value="@string/xposed_module_description" />
+
+        <activity
+            android:name=".telegram.TelegramSyncActivity"
+            android:exported="true"
+            android:label="@string/tg_title" />
+        <provider
+            android:name=".telegram.StickerExportProvider"
+            android:authorities="${applicationId}.stickers"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/sticker_export_paths" />
+        </provider>
 
         <activity
             android:name=".ui.MainActivity"
