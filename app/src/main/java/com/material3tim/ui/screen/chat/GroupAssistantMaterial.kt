@@ -42,6 +42,7 @@ internal fun GroupAssistantMaterial(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onOpenGroup: (ChatItem) -> Unit,
+    title: String? = null,
 ) {
     // 只读 ChatActions：复用会话行样式，长按菜单动作不生效（群助手页只做列表跳转）。
     val rowActions = remember {
@@ -58,7 +59,7 @@ internal fun GroupAssistantMaterial(
             TopAppBar(
                 title = {
                     Text(
-                        text = stringResource(R.string.group_assistant_title),
+                        text = title ?: stringResource(R.string.group_assistant_title),
                         style = MaterialTheme.typography.titleLarge,
                     )
                 },

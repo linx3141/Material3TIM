@@ -256,6 +256,13 @@ fun M3TimRoot(
                         entry<Route.GlobalSearch>(swipeDismiss = swipeDismiss) {
                             GlobalSearchScreen()
                         }
+                        entry<Route.ForwardGroupAssistant>(swipeDismiss = swipeDismiss) { key ->
+                            GroupAssistantScreen(
+                                forwardSrcChatId = key.srcChatId,
+                                forwardMsgIds = key.msgIds,
+                                forwardPreview = key.preview,
+                            )
+                        }
                         entry<Route.AddFriend>(swipeDismiss = swipeDismiss) { AddFriendScreen() }
                         entry<Route.ScanQr>(swipeDismiss = swipeDismiss) {
                             ScanQrScreen(onClose = { navigator.pop() })

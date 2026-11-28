@@ -90,6 +90,15 @@ sealed interface Route : NavKey, Parcelable {
     data class ChatImage(
         val imagePath: String,
         /** 会话 id（宿主取原图用；空=示例/无原图回退）。 */
+    /** 转发流程里的群助手：先选收进群助手的群，再把消息转发到所选群。 */
+    @Parcelize
+    @Serializable
+    data class ForwardGroupAssistant(
+        val srcChatId: String,
+        val msgIds: List<Long>,
+        val preview: String = "",
+    ) : Route
+
         val chatId: String = "",
         /** 消息内核 msgId（0=未知/示例数据）。 */
         val msgId: Long = 0L,

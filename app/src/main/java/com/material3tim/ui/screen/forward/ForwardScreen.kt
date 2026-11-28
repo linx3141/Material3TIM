@@ -33,6 +33,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -50,6 +51,8 @@ import com.material3tim.ui.LocalUiMode
 import com.material3tim.ui.UiMode
 import com.material3tim.ui.component.ChatAvatar
 import com.material3tim.ui.navigation3.LocalNavigator
+import com.material3tim.ui.navigation3.Route
+import com.material3tim.ui.screen.chat.GroupAssistantChatId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -138,7 +141,13 @@ fun ForwardScreen(srcChatId: String, msgIds: List<Long>, preview: String = "") {
     }
 
     val onClickChat: (ChatItem) -> Unit = { chat ->
-        if (multiSelect) {
+        if (chat.id == GroupAssistantChatId) {
+            // 群助手是伪会话：非多选时进入群助手群列表选择目标群；
+            // 多选转发时不可选（与 TIM 原生一致）。
+            if (!multiSelect) {
+                navigator.push(Route.ForwardGroupAssistant(srcChatId, msgIds, preview))
+            }
+        } else if (multiSelect) {
             selected = if (chat.id in selected) selected - chat.id else selected + chat.id
         } else {
             sendTo(listOf(chat.id))
@@ -364,6 +373,7 @@ private fun ForwardListContent(
                     chat = chat,
                     multiSelect = multiSelect,
                     checked = chat.id in selected,
+                    selectable = chat.id != GroupAssistantChatId,
                     onClick = { if (enabled) onChatClick(chat) },
                 )
             }
@@ -425,8 +435,11 @@ private fun ForwardChatCard(
     chat: ChatItem,
     multiSelect: Boolean,
     checked: Boolean,
+    selectable: Boolean = true,
     onClick: () -> Unit,
 ) {
+    // 多选时群助手不可选：整行置灰且不响应点击，也不显示 checkbox。
+    val rowAlpha = if (multiSelect && !selectable) 0.45f else 1f
     val uiMode = LocalUiMode.current
     val container = when (uiMode) {
         UiMode.Material -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -437,7 +450,8 @@ private fun ForwardChatCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(container)
-            .clickable(onClick = onClick)
+            .alpha(rowAlpha)
+            .clickable(enabled = !(multiSelect && !selectable), onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -473,7 +487,7 @@ private fun ForwardChatCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (multiSelect) {
+        if (multiSelect && selectable) {
             Spacer(Modifier.width(8.dp))
             when (uiMode) {
                 UiMode.Material -> Checkbox(

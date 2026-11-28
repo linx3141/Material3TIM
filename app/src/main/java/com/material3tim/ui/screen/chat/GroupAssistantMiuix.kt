@@ -70,6 +70,7 @@ internal fun GroupAssistantMiuix(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onOpenGroup: (ChatItem) -> Unit,
+    title: String? = null,
 ) {
     val rowActions = remember {
         ChatActions(
@@ -96,7 +97,7 @@ internal fun GroupAssistantMiuix(
         Scaffold(
             topBar = {
                 HyperTopAppBar(
-                    title = stringResource(R.string.group_assistant_title),
+                    title = title ?: stringResource(R.string.group_assistant_title),
                     scrollBehavior = scrollBehavior,
                     backdrop = backdrop,
                     isContentScrolled = listState.canScrollBackward,

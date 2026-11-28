@@ -510,10 +510,10 @@ internal fun ChatListRowMaterial(
             selected = false,
             onClick = onClick,
             leadingContent = {
+                    GroupAssistantAvatarMaterial()
                 if (chat.id == GroupAssistantChatId) {
                 } else if (chat.dataLineKind != 0) {
                     DataLineAvatar(kind = chat.dataLineKind)
-                    GroupAssistantAvatarMaterial()
                 } else {
                     ChatAvatar(
                         name = chat.name,
