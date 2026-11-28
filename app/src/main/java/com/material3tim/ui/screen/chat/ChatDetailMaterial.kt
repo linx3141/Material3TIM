@@ -2068,14 +2068,12 @@ private fun ChatInputBarMaterial(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         IconButton(
-            onClick = onAttachClick,
+            onClick = onStartVoiceRecord,
             modifier = Modifier.size(40.dp),
         ) {
             Icon(
-                imageVector = if (attachOpen) Icons.Filled.Close else Icons.Filled.Add,
-                contentDescription = stringResource(
-                    if (attachOpen) R.string.chat_input_close else R.string.chat_more_actions,
-                ),
+                imageVector = Icons.Filled.Mic,
+                contentDescription = stringResource(R.string.chat_voice),
                 tint = colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(26.dp),
             )
@@ -2134,6 +2132,7 @@ private fun ChatInputBarMaterial(
                         if (focusState.isFocused) {
                             onInputFocused()
                             imeController.onInputFocusGained()
+        // 左侧：语音按钮（与 QQ/TIM 一致：语音在左、加号在右）。
                         } else {
                             imeController.onInputFocusLost()
                         }
@@ -2171,21 +2170,32 @@ private fun ChatInputBarMaterial(
                 }
             }
         }
-        // 右侧操作位固定占位（空态麦克风 / 有文本发送），保证输入框宽度和输入栏高度不随文本变化。
-        if (composer.text.isEmpty()) {
-            IconButton(
-                onClick = onStartVoiceRecord,
+        // 右侧操作位固定占位（空态加号菜单 / 附件面板关闭 / 有文本发送），
+        // 保证输入框宽度和输入栏高度不随文本变化。
+        when {
+            attachOpen -> IconButton(
+                onClick = onAttachClick,
                 modifier = Modifier.size(44.dp),
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Mic,
-                    contentDescription = stringResource(R.string.chat_voice),
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = stringResource(R.string.chat_input_close),
                     tint = colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp),
                 )
             }
-        } else {
-            FilledIconButton(
+            composer.text.isEmpty() -> IconButton(
+                onClick = onAttachClick,
+                modifier = Modifier.size(44.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = stringResource(R.string.chat_more_actions),
+                    tint = colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(26.dp),
+                )
+            }
+            else -> FilledIconButton(
                 onClick = submit,
                 modifier = Modifier.size(44.dp),
             ) {
