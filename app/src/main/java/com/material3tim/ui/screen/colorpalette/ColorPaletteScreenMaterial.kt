@@ -302,6 +302,15 @@ fun ColorPaletteScreenMaterial(
                                 checked = uiState.enableNavigationBadge,
                                 onCheckedChange = actions.onSetEnableNavigationBadge
                             )
+                        },
+                        {
+                            SegmentedSwitchItem(
+                                icon = Icons.Rounded.ViewCarousel,
+                                title = stringResource(id = R.string.settings_launcher_floating_toolbar),
+                                summary = stringResource(id = R.string.settings_launcher_floating_toolbar_summary),
+                                checked = uiState.enableLauncherFloatingToolbar,
+                                onCheckedChange = actions.onSetEnableLauncherFloatingToolbar,
+                            )
                         }
                     )
                 )

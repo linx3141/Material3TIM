@@ -256,6 +256,7 @@ internal fun ChatDetailMiuix(
     onStartVoiceRecord: () -> Unit = {},
     initialMessagesLoaded: Boolean = true,
     imeController: ChatImeController,
+    showPlusOne: Boolean = false,
 ) {
     val context = LocalContext.current
     val enableBlur = LocalEnableBlur.current
@@ -320,6 +321,11 @@ internal fun ChatDetailMiuix(
     var pendingOlderOffset by remember(chat.id) { mutableStateOf(0) }
     var pendingOlderCount by remember(chat.id) { mutableStateOf(0) }
     // 需要延迟兜底校正的目标（index + offset）
+    // jumpCursor：下一次跳转距列表末尾的偏移（0 = 最新一条）；每次跳转 +1。
+    var jumpCursor by remember(chat.id) { mutableIntStateOf(0) }
+    val hasJumpTargets = jumpTargets.isNotEmpty() && jumpCursor < jumpTargets.size
+    // 回到最底部按钮：只要列表还能向前滚动（不在底部）就显示，回到底部自动隐藏。
+    // 不再按手势方向即时收起：正常滑动/停顿/惯性回弹时按钮不会闪来闪去。
     var olderCorrectionTarget by remember(chat.id) { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // 在组合阶段就算出恢复目标，并用 SideEffect 在「布局之前」请求滚动（requestScrollToItem），
@@ -784,6 +790,8 @@ internal fun ChatDetailMiuix(
                     inputFocusRequester = chatInputFocusRequester,
                     onStartVoiceRecord = onStartVoiceRecord,
                 )
+                                    showPlusOne = showPlusOne,
+                                    onPlusOne = onPlusOne,
                 // 表情面板：输入栏下方的“键盘位”面板。
                 AnimatedVisibility(
                     visible = composer.panel == ChatPanel.Emoji,
@@ -920,6 +928,8 @@ private fun MessageRowMiuix(
     onArkGroupNoticeClick: (ChatMessage) -> Unit = {},
 ) {
     val isMe = message.isMe
+                showPlusOne = showPlusOne,
+                onPlusOne = onPlusOne,
     val selection = LocalMessageSelection.current
     val selectionActive = selection?.active == true
     Row(
@@ -952,7 +962,8 @@ private fun MessageRowMiuix(
             Spacer(Modifier.weight(1f))
         }
         Column(
-            modifier = Modifier.widthIn(max = 284.dp),
+            // 284dp 是气泡最大宽度；开启双击加一时额外容纳 34dp 的 +1 圆钮。
+            modifier = Modifier.widthIn(max = 284.dp + 34.dp),
             horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
         ) {
             // 群聊：别人消息按 showSenderName 显示；自己消息（bridge showSenderName=false）在群聊里同样显示昵称。
@@ -986,23 +997,8 @@ private fun MessageRowMiuix(
             if (message.hasReply || message.replyToContent.isNotBlank() || message.replyToName.isNotBlank()) {
                 ReplyQuoteMiuix(message, onClick = { onReplyQuoteClick(message) })
             }
-            // 多选模式下不挂长按菜单（点击整行只用于选择），直接渲染气泡。
-            if (selectionActive) {
-                ChatBubbleMiuix(
-                    message = message,
-                    position = group.position,
-                    onFileClick = onFileClick,
-                    downloadingFileMsgId = downloadingFileMsgId,
-                    fileDownloadProgress = fileDownloadProgress,
-                    onArkGroupNoticeClick = onArkGroupNoticeClick,
-                )
-            } else {
-                BubbleActionMenuHost(
-                    message = message,
-                    canRecallOthers = canRecallOthers,
-                    canAtSender = canGroupAtSender,
-                    canAddToFavorite = canAddToFavorite,
-                ) {
+            val bubbleContentMiuix: @Composable () -> Unit = {
+                if (selectionActive) {
                     ChatBubbleMiuix(
                         message = message,
                         position = group.position,
@@ -1014,10 +1010,8 @@ private fun MessageRowMiuix(
                 }
             }
             if (group.isGroupEnd) {
-                MessageMetaMiuix(message = message, plusOne = plusOne)
-            } else if (plusOne) {
-                // 组内消息没有时间/已读行，+1 标记仍需立即出现在气泡下方。
-                PlusOneTagMiuix(modifier = Modifier.padding(top = 2.dp))
+                // 不再显示 +1 成功后的「+1」badge（按需求移除）。
+                MessageMetaMiuix(message = message)
             }
         }
         // 多选：对方的消息 checkbox 放整行最右侧，头像+气泡仍贴左。
@@ -1044,6 +1038,36 @@ private fun MessageRowMiuix(
 private fun MiuixSelectionCheckbox(
     checked: Boolean,
     onToggle: () -> Unit,
+                } else {
+                    BubbleActionMenuHost(
+                        message = message,
+                        canRecallOthers = canRecallOthers,
+                        canAtSender = canGroupAtSender,
+                        canAddToFavorite = canAddToFavorite,
+                    ) {
+                        ChatBubbleMiuix(
+                            message = message,
+                            position = group.position,
+                            onFileClick = onFileClick,
+                            downloadingFileMsgId = downloadingFileMsgId,
+                            fileDownloadProgress = fileDownloadProgress,
+                            onArkGroupNoticeClick = onArkGroupNoticeClick,
+                        )
+                    }
+                }
+            }
+            if (showPlusOne && !selectionActive) {
+                // 自己的气泡 +1 在左，对方气泡 +1 在右；圆钮与气泡中心线对齐（不含时间/已读行）。
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isMe) {
+                        PlusOneCircleMiuix(plusOne = plusOne, onClick = { onPlusOne(message) })
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Box(modifier = Modifier.widthIn(max = 284.dp)) { bubbleContentMiuix() }
+                    if (!isMe) {
+                        Spacer(Modifier.width(8.dp))
+                        PlusOneCircleMiuix(plusOne = plusOne, onClick = { onPlusOne(message) })
+                    }
     modifier: Modifier = Modifier,
 ) {
     top.yukonga.miuix.kmp.basic.Checkbox(
@@ -1075,6 +1099,28 @@ private fun ChatAvatarSlotMiuix(
         val avatarModifier = sidePadding
             .padding(bottom = if (hasMeta) ChatAvatarMetaLift else 0.dp)
             .then(
+/** 气泡右侧的「+1」圆钮（双击加一开关开启时显示，Miuix 官方 Surface 样式）。 */
+@Composable
+private fun PlusOneCircleMiuix(plusOne: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(colorScheme.primaryContainer)
+            // 双击 +1 圆钮才复读（单击不触发）。
+            .pointerInput(Unit) {
+                detectTapGestures(onDoubleTap = { onClick() })
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        MiuixText(
+            text = "+1",
+            fontSize = 11.sp,
+            color = colorScheme.onPrimaryContainer,
+        )
+    }
+}
+
                 if (avatarClickable) {
                     Modifier.clickable { onAvatarClick(message) }
                 } else {

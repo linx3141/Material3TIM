@@ -24,6 +24,8 @@ fun SettingPager(navigator: Navigator) {
         onOpenTheme = { navigator.push(Route.ColorPalette) },
         onSetUiModeIndex = { index -> viewModel.setUiMode(uiModeFromIndex(index)) },
         onOpenAbout = { navigator.push(Route.About) },
+        onSetDoubleTapPlusOne = { enabled -> viewModel.setDoubleTapPlusOne(enabled) },
+        onSetShowChatTopBarAvatar = { enabled -> viewModel.setShowChatTopBarAvatar(enabled) },
     )
 
     when (LocalUiMode.current) {

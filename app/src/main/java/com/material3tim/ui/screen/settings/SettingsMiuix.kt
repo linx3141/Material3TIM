@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.runtime.Composable
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -163,6 +164,38 @@ fun SettingPagerMiuix(
                         },
                         CardItem("about") {
                             ArrowPreference(
+                        CardItem("doubleTapPlusOne") {
+                            SwitchPreference(
+                                title = stringResource(R.string.settings_double_tap_plus_one),
+                                summary = stringResource(R.string.settings_double_tap_plus_one_summary),
+                                startAction = {
+                                    Icon(
+                                        imageVector = Icons.Filled.TouchApp,
+                                        contentDescription = null,
+                                        modifier = Modifier.padding(end = 6.dp),
+                                        tint = colorScheme.onBackground,
+                                    )
+                                },
+                                checked = uiState.enableDoubleTapPlusOne,
+                                onCheckedChange = actions.onSetDoubleTapPlusOne,
+                            )
+                        },
+                        CardItem("chatTopBarAvatar") {
+                            SwitchPreference(
+                                title = stringResource(R.string.settings_chat_top_bar_avatar),
+                                summary = stringResource(R.string.settings_chat_top_bar_avatar_summary),
+                                startAction = {
+                                    Icon(
+                                        imageVector = Icons.Filled.AccountCircle,
+                                        contentDescription = null,
+                                        modifier = Modifier.padding(end = 6.dp),
+                                        tint = colorScheme.onBackground,
+                                    )
+                                },
+                                checked = uiState.showChatTopBarAvatar,
+                                onCheckedChange = actions.onSetShowChatTopBarAvatar,
+                            )
+                        },
                                 title = stringResource(id = R.string.about),
                                 startAction = {
                                     Icon(

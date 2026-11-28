@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -35,6 +36,7 @@ import com.material3tim.ui.component.material.SegmentedColumn
 import com.material3tim.ui.component.material.SegmentedDropdownItem
 import com.material3tim.ui.component.material.SegmentedListItem
 import com.material3tim.ui.component.material.TopBarBackButton
+import com.material3tim.ui.component.material.SegmentedSwitchItem
 import com.material3tim.ui.component.material.expressiveTopAppBarColors
 import com.material3tim.ui.navigation3.LocalNavigator
 
@@ -111,6 +113,24 @@ fun SettingPagerMaterial(
                         )
                     },
                     {
+                    {
+                        SegmentedSwitchItem(
+                            icon = Icons.Filled.TouchApp,
+                            title = stringResource(id = R.string.settings_double_tap_plus_one),
+                            summary = stringResource(id = R.string.settings_double_tap_plus_one_summary),
+                            checked = uiState.enableDoubleTapPlusOne,
+                            onCheckedChange = actions.onSetDoubleTapPlusOne,
+                        )
+                    },
+                    {
+                        SegmentedSwitchItem(
+                            icon = Icons.Filled.AccountCircle,
+                            title = stringResource(id = R.string.settings_chat_top_bar_avatar),
+                            summary = stringResource(id = R.string.settings_chat_top_bar_avatar_summary),
+                            checked = uiState.showChatTopBarAvatar,
+                            onCheckedChange = actions.onSetShowChatTopBarAvatar,
+                        )
+                    },
                         SegmentedListItem(
                             onClick = actions.onOpenAbout,
                             headlineContent = { Text(stringResource(id = R.string.about)) },

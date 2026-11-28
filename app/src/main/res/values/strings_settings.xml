@@ -12,4 +12,10 @@
     <string name="about_third_party_miuix">Miuix</string>
     <string name="about_third_party_kolor">material-kolor</string>
     <string name="about_third_party_google_sans">Google Sans Flex</string>
+    <string name="settings_double_tap_plus_one">双击加一</string>
+    <string name="settings_double_tap_plus_one_summary">打开后每条气泡右侧显示 +1，双击气泡可复读</string>
+    <string name="settings_launcher_floating_toolbar">Launcher3 悬浮底栏</string>
+    <string name="settings_launcher_floating_toolbar_summary">使用 Launcher3 微件页同款可滚动悬浮底栏（图标随选中项出现）</string>
+    <string name="settings_chat_top_bar_avatar">聊天页顶栏头像</string>
+    <string name="settings_chat_top_bar_avatar_summary">在聊天名称左侧显示群/用户圆形头像</string>
 </resources>

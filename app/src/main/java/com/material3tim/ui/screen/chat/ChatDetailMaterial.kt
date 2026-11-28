@@ -233,6 +233,7 @@ internal fun ChatDetailMaterial(
     onLoadOlder: () -> Unit = {},
     isLoadingOlder: Boolean = false,
     hasMoreOlder: Boolean = true,
+    showPlusOne: Boolean = false,
     onAttachAction: (ChatAttachAction) -> Unit = {},
     onCameraAction: (Boolean) -> Unit = {},
     onSendCustomEmoji: (CustomEmoji) -> Unit = {},
@@ -290,6 +291,11 @@ internal fun ChatDetailMaterial(
     // 非 reverseLayout 列表的滚动锚定：进入时到底部、有新消息且原本在底部时跟随；
     // 加载更早消息时的视口保持由下面的 pendingOlderAnchor 逻辑处理。
     var scrollAnchor by remember(chat.id) {
+    // jumpCursor：下一次跳转距列表末尾的偏移（0 = 最新一条）；每次跳转 +1。
+    var jumpCursor by remember(chat.id) { mutableIntStateOf(0) }
+    val hasJumpTargets = jumpTargets.isNotEmpty() && jumpCursor < jumpTargets.size
+    // 回到最底部按钮：只要列表还能向前滚动（不在底部）就显示，回到底部自动隐藏。
+    // 不再按手势方向即时收起：正常滑动/停顿/惯性回弹时按钮不会闪来闪去。
         mutableStateOf(ChatScrollAnchor(count = -1, lastId = null, atBottom = true))
     }
     val latestMessagesForRefresh = androidx.compose.runtime.rememberUpdatedState(messages)
@@ -728,6 +734,8 @@ internal fun ChatDetailMaterial(
                                 onAvatarClick = onAvatarClick,
                                 isGroupChat = chat.isGroup,
                                 selfGroupName = selfGroupName,
+                                showPlusOne = showPlusOne,
+                                onPlusOne = onPlusOne,
                                 onArkGroupNoticeClick = onArkGroupNoticeClick,
                             )
                         }
@@ -897,6 +905,8 @@ internal fun ChatMessageItemMaterial(
                 canGroupAtSender = canGroupAtSender,
                 canAddToFavorite = canAddToFavorite,
                 onAvatarClick = onAvatarClick,
+                showPlusOne = showPlusOne,
+                onPlusOne = onPlusOne,
                 isGroupChat = isGroupChat,
                 selfGroupName = selfGroupName,
                 onArkGroupNoticeClick = onArkGroupNoticeClick,
@@ -958,7 +968,8 @@ private fun MessageRowMaterial(
             Spacer(Modifier.weight(1f))
         }
         Column(
-            modifier = Modifier.widthIn(max = 284.dp),
+            // 284dp 是气泡最大宽度；开启双击加一时右侧/左侧额外放 34dp 的 +1 圆钮。
+            modifier = Modifier.widthIn(max = 284.dp + 34.dp),
             horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
         ) {
             // 群聊：别人消息按 showSenderName 显示；自己消息（bridge showSenderName=false）在群聊里同样显示昵称。
@@ -990,23 +1001,9 @@ private fun MessageRowMaterial(
             if (message.hasReply || message.replyToContent.isNotBlank() || message.replyToName.isNotBlank()) {
                 ReplyQuoteMaterial(message, onClick = { onReplyQuoteClick(message) })
             }
-            // 多选模式下不挂长按菜单（点击整行只用于选择），直接渲染气泡。
-            if (selectionActive) {
-                ChatBubbleMaterial(
-                    message = message,
-                    position = group.position,
-                    onFileClick = onFileClick,
-                    downloadingFileMsgId = downloadingFileMsgId,
-                    fileDownloadProgress = fileDownloadProgress,
-                    onArkGroupNoticeClick = onArkGroupNoticeClick,
-                )
-            } else {
-                BubbleActionMenuHost(
-                    message = message,
-                    canRecallOthers = canRecallOthers,
-                    canAtSender = canGroupAtSender,
-                    canAddToFavorite = canAddToFavorite,
-                ) {
+            val bubbleContent: @Composable () -> Unit = {
+                // 多选模式下不挂长按菜单（点击整行只用于选择），直接渲染气泡。
+                if (selectionActive) {
                     ChatBubbleMaterial(
                         message = message,
                         position = group.position,
@@ -1018,10 +1015,38 @@ private fun MessageRowMaterial(
                 }
             }
             if (group.isGroupEnd) {
-                MessageMetaMaterial(message = message, plusOne = plusOne)
-            } else if (plusOne) {
-                // 组内消息没有时间/已读行，+1 标记仍需立即出现在气泡下方。
-                PlusOneTagMaterial(modifier = Modifier.padding(top = 2.dp))
+                // 不再显示 +1 成功后的「+1」badge（按需求移除）。
+                MessageMetaMaterial(message = message)
+                } else {
+                    BubbleActionMenuHost(
+                        message = message,
+                        canRecallOthers = canRecallOthers,
+                        canAtSender = canGroupAtSender,
+                        canAddToFavorite = canAddToFavorite,
+                    ) {
+                        ChatBubbleMaterial(
+                            message = message,
+                            position = group.position,
+                            onFileClick = onFileClick,
+                            downloadingFileMsgId = downloadingFileMsgId,
+                            fileDownloadProgress = fileDownloadProgress,
+                            onArkGroupNoticeClick = onArkGroupNoticeClick,
+                        )
+                    }
+                }
+            }
+            if (showPlusOne && !selectionActive) {
+                // 自己的气泡 +1 在左，对方气泡 +1 在右；圆钮与气泡中心线对齐（不含时间/已读行）。
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isMe) {
+                        PlusOneCircleMaterial(plusOne = plusOne, onClick = { onPlusOne(message) })
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Box(modifier = Modifier.widthIn(max = 284.dp)) { bubbleContent() }
+                    if (!isMe) {
+                        Spacer(Modifier.width(8.dp))
+                        PlusOneCircleMaterial(plusOne = plusOne, onClick = { onPlusOne(message) })
+                    }
             }
         }
         // 多选：对方的消息 checkbox 放整行最右侧，头像+气泡仍贴左。
@@ -1053,6 +1078,31 @@ private fun MaterialSelectionCheckbox(
     androidx.compose.material3.Checkbox(
         checked = checked,
         onCheckedChange = { onToggle() },
+/** 气泡右侧的「+1」圆钮（双击加一开关开启时显示）。 */
+@Composable
+private fun PlusOneCircleMaterial(plusOne: Boolean, onClick: () -> Unit) {
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        // 双击 +1 圆钮才复读（单击不触发）。
+        modifier = Modifier
+            .size(26.dp)
+            .pointerInput(Unit) {
+                detectTapGestures(onDoubleTap = { onClick() })
+            },
+        shape = CircleShape,
+        color = colorScheme.primaryContainer,
+        contentColor = colorScheme.onPrimaryContainer,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = "+1",
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 11.sp,
+            )
+        }
+    }
+}
+
         modifier = modifier,
     )
 }

@@ -72,6 +72,14 @@ class SettingsRepositoryImpl : SettingsRepository {
         get() = prefs.getBoolean("show_top_app_bar", true)
         set(value) = prefs.edit { putBoolean("show_top_app_bar", value) }
 
+    override var enableDoubleTapPlusOne: Boolean
+        get() = prefs.getBoolean("enable_double_tap_plus_one", false)
+        set(value) = prefs.edit { putBoolean("enable_double_tap_plus_one", value) }
+
+    override var showChatTopBarAvatar: Boolean
+        get() = prefs.getBoolean("show_chat_top_bar_avatar", true)
+        set(value) = prefs.edit { putBoolean("show_chat_top_bar_avatar", value) }
+
     override var topAppBarStyle: Int
         get() = prefs.getInt("top_app_bar_style", 1)
         set(value) = prefs.edit { putInt("top_app_bar_style", value.coerceIn(0, 1)) }

@@ -411,6 +411,29 @@ private fun ChatDetailContent(
     val plusOneAlreadyLabel = stringResource(R.string.chat_plus_one_already)
     val plusOneUnsupportedLabel = stringResource(R.string.chat_plus_one_unsupported)
     val plusOneUnavailableLabel = stringResource(R.string.chat_plus_one_unavailable)
+    // 「双击加一」设置：气泡右侧显示 +1 / 双击复读。设置页切换后回到聊天页（ON_RESUME）重新读取。
+    var showDoubleTapPlusOne by remember {
+        mutableStateOf(runCatching { SettingsRepositoryImpl().enableDoubleTapPlusOne }.getOrDefault(false))
+    }
+    // 顶栏名称左侧头像开关（默认开；从设置页切回时 ON_RESUME 重新读取）。
+    var showChatTopBarAvatar by remember {
+        mutableStateOf(runCatching { SettingsRepositoryImpl().showChatTopBarAvatar }.getOrDefault(true))
+    }
+    val plusOneSettingsLifecycle = LocalLifecycleOwner.current
+    DisposableEffect(plusOneSettingsLifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                showDoubleTapPlusOne = runCatching {
+                    SettingsRepositoryImpl().enableDoubleTapPlusOne
+                }.getOrDefault(false)
+                showChatTopBarAvatar = runCatching {
+                    SettingsRepositoryImpl().showChatTopBarAvatar
+                }.getOrDefault(true)
+            }
+        }
+        plusOneSettingsLifecycle.lifecycle.addObserver(observer)
+        onDispose { plusOneSettingsLifecycle.lifecycle.removeObserver(observer) }
+    }
     val plusOneFailedLabel = stringResource(R.string.chat_plus_one_failed)
     val showToast: (String) -> Unit = { text ->
         android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
@@ -1503,6 +1526,8 @@ private fun ChatDetailContent(
             onPlusOne = onPlusOne,
             plusOneMessageIds = plusOneMessageIds,
             onDeleteMessage = onDeleteMessage,
+            showPlusOne = showDoubleTapPlusOne,
+            showTopBarAvatar = showChatTopBarAvatar,
             onRecallMessage = onRecallMessage,
             onFileClick = onFileClick,
             downloadingFileMsgId = downloadingFileMsgId,
@@ -1556,6 +1581,8 @@ private fun ChatDetailContent(
             onPlusOne = onPlusOne,
             plusOneMessageIds = plusOneMessageIds,
             onDeleteMessage = onDeleteMessage,
+            showPlusOne = showDoubleTapPlusOne,
+            showTopBarAvatar = showChatTopBarAvatar,
             onRecallMessage = onRecallMessage,
             onFileClick = onFileClick,
             downloadingFileMsgId = downloadingFileMsgId,

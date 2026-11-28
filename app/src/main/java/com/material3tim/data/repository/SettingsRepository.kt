@@ -22,6 +22,10 @@ interface SettingsRepository {
     var enableNavigationBadge: Boolean
     /** 是否显示顶部栏（Miuix 页面）。 */
     var showTopAppBar: Boolean
+    /** 双击加一：聊天里每条气泡右侧显示 +1，双击气泡复读（与长按菜单 +1 相同）。 */
+    /** 聊天页顶栏在聊天名称左侧显示圆形头像。 */
+    var showChatTopBarAvatar: Boolean
+    var enableDoubleTapPlusOne: Boolean
     /** 顶部栏风格：0=Original（普通 TopAppBar），1=Glass（GlassTopAppBar）。 */
     var topAppBarStyle: Int
     /** 是否显示底部导航栏（Miuix）。 */

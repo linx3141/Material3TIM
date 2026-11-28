@@ -114,6 +114,8 @@ internal fun BubbleActionMenuHost(
     canRecallOthers: Boolean = false,
     canAtSender: Boolean = false,
     canAddToFavorite: Boolean = false,
+    /** 开启「双击加一」时：双击气泡触发 +1（与长按菜单的 +1 一致）。 */
+    onDoubleTap: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val onMenuAction = LocalMessageMenuAction.current
@@ -125,6 +127,9 @@ internal fun BubbleActionMenuHost(
     var pressOffset by remember(message.id) { mutableStateOf(IntOffset.Zero) }
     // 长按点（相对气泡左上角）：1dp 透明锚点 Box 放在这里，作为 morph 展开/收缩的中心。
     var pressPosition by remember(message.id) { mutableStateOf(Offset.Zero) }
+    // 双击加一：记录上一次抬手时间/位置，第二次快速点击时触发。
+    var lastTapUptime by remember(message.id) { mutableStateOf(0L) }
+    var lastTapPosition by remember(message.id) { mutableStateOf(Offset.Zero) }
     // 1x1 morph 锚点：GlassTransformPopup 从手指长按点展开，预测性返回跟手收缩回该点。
     val menuAnchor = rememberGlassPopupAnchor()
     val haptic = LocalHapticFeedback.current
@@ -144,6 +149,7 @@ internal fun BubbleActionMenuHost(
                         requireUnconsumed = false,
                         pass = PointerEventPass.Initial,
                     )
+                    var movedBeyondSlop = false
                     val releasedBeforeLongPress = withTimeoutOrNull(
                         viewConfiguration.longPressTimeoutMillis,
                     ) {
@@ -157,11 +163,26 @@ internal fun BubbleActionMenuHost(
                                 (change.position - down.position).getDistance() >
                                 viewConfiguration.touchSlop
                             ) {
+                                movedBeyondSlop = true
                                 finished = true
                             }
                         }
                         true
                     } != null
+                    if (releasedBeforeLongPress && !movedBeyondSlop && onDoubleTap != null) {
+                        val now = android.os.SystemClock.uptimeMillis()
+                        val isDoubleTap = lastTapUptime != 0L &&
+                            now - lastTapUptime <= viewConfiguration.doubleTapTimeoutMillis &&
+                            (down.position - lastTapPosition).getDistance() <=
+                            viewConfiguration.touchSlop * 2
+                        if (isDoubleTap) {
+                            lastTapUptime = 0L
+                            onDoubleTap()
+                        } else {
+                            lastTapUptime = now
+                            lastTapPosition = down.position
+                        }
+                    }
                     if (!releasedBeforeLongPress) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         pressPosition = down.position
