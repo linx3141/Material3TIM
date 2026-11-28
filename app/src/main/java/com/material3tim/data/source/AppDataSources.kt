@@ -520,6 +520,18 @@ object AppDataSources {
     var messageSource: MessageSource? = null
 
     @Volatile
+/**
+ * 原生 TIM 界面切换（仅宿主模式）。
+ * 我们的 Compose 界面是盖在 TIM decorView 上的覆盖层；切到原生时隐藏覆盖层。
+ */
+interface NativeUiSource {
+    /** 切换到 TIM 原生界面；成功返回 true。 */
+    fun switchToNativeUi(): Boolean = false
+
+    /** 当前是否处于 TIM 原生界面。 */
+    fun isNativeUiMode(): Boolean = false
+}
+
     var contactSource: ContactSource? = null
 
     @Volatile
@@ -564,6 +576,9 @@ object AppDataSources {
 
     val hasLiveContacts: Boolean
         get() = contactSource != null
+
+    @Volatile
+    var nativeUiSource: NativeUiSource? = null
 
     val hasLiveEmojis: Boolean
         get() = emojiSource != null

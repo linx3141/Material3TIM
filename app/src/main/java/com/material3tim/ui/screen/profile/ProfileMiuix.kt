@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
@@ -188,6 +189,15 @@ fun ProfileMiuix(
                 )
                 item(key = "bottom_padding") {
                     Spacer(
+                        CardItem("native_ui") {
+                            // 隐藏 Compose 覆盖层，切到 TIM 原生界面。
+                            ProfileEntryMiuix(
+                                icon = Icons.Filled.ExitToApp,
+                                title = stringResource(R.string.profile_native_ui),
+                                summary = stringResource(R.string.profile_native_ui_summary),
+                                onClick = { enterNativeTimUi(context) },
+                            )
+                        },
                         Modifier.height(
                             bottomInnerPadding +
                                     WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +

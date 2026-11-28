@@ -619,22 +619,17 @@ internal fun ChatDetailMiuix(
                     },
                 )
             } else {
-                HyperTopAppBar(
-                    title = chat.name,
-                    subtitle = chatSubtitle(chat).orEmpty(),
-                    scrollBehavior = scrollBehavior,
-                    backdrop = backdrop,
-                    expandable = false,
-                    isContentScrolled = listState.canScrollBackward,
-                    navigationIcon = {
-                        HyperTopBarIconButton(
-                            onClick = onBack,
-                            contentDescription = stringResource(R.string.chat_detail_back),
-                            icon = MiuixIcons.Back,
-                        )
-                    },
-                    actions = {
-                        if (!chat.isGroup) {
+                Box {
+                    HyperTopAppBar(
+                        // 头像开启时标题由下方 overlay 绘制（标题仍居中、头像贴在标题左侧）；
+                        // 关闭时保持 Miuix 原生标题渲染。
+                        title = if (showTopBarAvatar) "" else chat.name,
+                        subtitle = if (showTopBarAvatar) "" else chatSubtitle(chat).orEmpty(),
+                        scrollBehavior = scrollBehavior,
+                        backdrop = backdrop,
+                        expandable = false,
+                        isContentScrolled = listState.canScrollBackward,
+                        navigationIcon = {
                             HyperTopBarIconButton(
                                 onClick = comingSoon,
                                 contentDescription = stringResource(R.string.contact_audio_call),

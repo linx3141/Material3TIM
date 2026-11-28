@@ -3,10 +3,15 @@ package com.material3tim.xposed
 import android.app.Activity
 import android.content.Context
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.util.Log
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.ComposeView
@@ -54,8 +59,99 @@ internal object UiHost {
     private val immersiveReapplyAt: MutableMap<Activity, Long> =
         Collections.synchronizedMap(WeakHashMap<Activity, Long>())
 
+    /** 最近一次挂载的 Activity / 模块 / 模块 Resources（原生界面切换要用）。 */
+    private var lastActivityRef: java.lang.ref.WeakReference<Activity>? = null
+    private var lastModule: MainModule? = null
+    private var lastModuleResources: android.content.res.Resources? = null
+
+    /**
+     * 是否处于「TIM 原生界面」模式：true 时我们的 Compose 覆盖层隐藏，
+     * 不再自动补挂；decorView 上放一个返回按钮供用户切回。
+     */
+    @Volatile
+    private var nativeUiMode = false
+
+    /** TIM 原生界面模式下的返回按钮（挂在 TIM decorView 最上层）。 */
+    private var nativeReturnButton: View? = null
+
+    fun isNativeUiMode(): Boolean = nativeUiMode
+
+    /** 切换到 TIM 原生界面：隐藏 Compose 覆盖层，保留 TIM 自己的界面，并加返回按钮。 */
+    fun switchToNativeUi(): Boolean {
+        val activity = lastActivityRef?.get() ?: hosted.keys.firstOrNull { !it.isFinishing }
+            ?: return false
+        nativeUiMode = true
+        // 原生 TIM 界面按它自己的窗口配置布局：恢复 decorFitsSystemWindows，恢复系统栏颜色。
+        runCatching {
+            WindowCompat.setDecorFitsSystemWindows(activity.window, true)
+            @Suppress("DEPRECATION")
+            activity.window?.statusBarColor = Color.TRANSPARENT
+        }
+        hosted[activity]?.visibility = View.GONE
+        showNativeReturnButton(activity)
+        Log.i(TAG, "switched to native TIM ui on ${activity.javaClass.simpleName}")
+        return true
+    }
+
+    /** 从 TIM 原生界面切回我们的 Compose 界面。 */
+    fun switchToOurUi(): Boolean {
+        val activity = lastActivityRef?.get() ?: return false
+        val module = lastModule ?: return false
+        nativeUiMode = false
+        hideNativeReturnButton()
+        ensureHosted(module, activity)
+        hosted[activity]?.visibility = View.VISIBLE
+        configureWindow(activity)
+        HostOwners.get(activity)?.onResume()
+        Log.i(TAG, "switched back to compose ui on ${activity.javaClass.simpleName}")
+        return true
+    }
+
+    /** 原生界面模式的返回按钮：原生 TIM 页面没有我们的入口，需要一个常驻按钮兜底。 */
+    private fun showNativeReturnButton(activity: Activity) {
+        if (nativeReturnButton?.parent != null) return
+        val decor = activity.window?.decorView as? ViewGroup ?: return
+        val res = lastModuleResources
+        val label = runCatching {
+            res?.getString(com.material3tim.R.string.native_ui_return_button)
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "返回 Material3Tim"
+        val density = activity.resources.displayMetrics.density
+        val button = TextView(activity).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            gravity = Gravity.CENTER
+            val padH = (14 * density).toInt()
+            val padV = (8 * density).toInt()
+            setPadding(padH, padV, padH, padV)
+            background = GradientDrawable().apply {
+                cornerRadius = 22 * density
+                setColor(Color.parseColor("#E61C1B1F"))
+                setStroke((1 * density).toInt(), Color.parseColor("#66FFFFFF"))
+            }
+            elevation = 12 * density
+            setOnClickListener { switchToOurUi() }
+        }
+        val lp = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.END,
+        ).apply {
+            setMargins(0, 0, (20 * density).toInt(), (96 * density).toInt())
+        }
+        decor.addView(button, lp)
+        nativeReturnButton = button
+    }
+
+    private fun hideNativeReturnButton() {
+        val button = nativeReturnButton ?: return
+        (button.parent as? ViewGroup)?.removeView(button)
+        nativeReturnButton = null
+    }
+
     /** 供 hook 调用：保证目标 Activity 上已经挂上我们的 UI。 */
     fun ensureHosted(module: MainModule, activity: Activity) {
+        if (nativeUiMode) return
         if (activity.isFinishing) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed) return
         try {
@@ -75,7 +171,10 @@ internal object UiHost {
     }
 
     private fun install(module: MainModule, activity: Activity) {
+        lastActivityRef = java.lang.ref.WeakReference(activity)
+        lastModule = module
         val moduleResources = ModuleResources.createModuleResources(module, activity)
+        lastModuleResources = moduleResources
         if (moduleResources == null) {
             // 兜底：把模块资源注入宿主 Activity 的 Resources。
             val injected = ModuleResources.injectIntoHostResources(module, activity, activity.resources)
@@ -100,6 +199,7 @@ internal object UiHost {
         AppEnvironment.init(moduleContext)
         // 第 3 步：把真实 TIM 数据接入 UI（会话列表 → 之后的消息/联系人/发送）。
         TimBridge.install()
+        com.material3tim.data.source.AppDataSources.nativeUiSource = TimNativeUiSource
         com.material3tim.data.source.AppDataSources.chatSource = TimChatSource()
         com.material3tim.data.source.AppDataSources.messageSource = TimMessageSource()
         com.material3tim.data.source.AppDataSources.contactSource = TimContactSource()
@@ -247,7 +347,8 @@ internal object UiHost {
     }
 
     /** UI 消费返回键（由 Activity.onBackPressed hook 调用）。 */
-    fun consumeBack(activity: Activity): Boolean = HostOwners.get(activity)?.dispatchBack() == true
+    fun consumeBack(activity: Activity): Boolean =
+        if (nativeUiMode) false else HostOwners.get(activity)?.dispatchBack() == true
 
     /** 生命周期事件（由 hook 调用）。 */
     fun onActivityPause(activity: Activity) {
@@ -259,6 +360,11 @@ internal object UiHost {
     }
 
     fun onActivityResumed(activity: Activity) {
+        if (nativeUiMode) {
+            lastActivityRef = java.lang.ref.WeakReference(activity)
+            showNativeReturnButton(activity)
+            return
+        }
         val view = hosted[activity] ?: return
         configureWindow(activity)
         HostOwners.get(activity)?.onResume()
@@ -274,6 +380,10 @@ internal object UiHost {
     fun onActivityDestroyed(activity: Activity) {
         hosted.remove(activity)
         HostOwners.remove(activity)
+        if (lastActivityRef?.get() === activity) {
+            nativeReturnButton = null
+            lastActivityRef = null
+        }
     }
 
     private fun attachToDecor(activity: Activity, view: ComposeView) {
@@ -333,6 +443,7 @@ internal object UiHost {
     }
 
     private fun applyImmersiveWindowFlags(activity: Activity) {
+        if (nativeUiMode) return
         val window = activity.window ?: return
         try {
             WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -381,4 +492,10 @@ internal object UiHost {
         } catch (_: Throwable) {
         }
     }
+}
+
+/** [com.material3tim.data.source.NativeUiSource] 的宿主实现：直接驱动 [UiHost]。 */
+internal object TimNativeUiSource : com.material3tim.data.source.NativeUiSource {
+    override fun switchToNativeUi(): Boolean = UiHost.switchToNativeUi()
+    override fun isNativeUiMode(): Boolean = UiHost.isNativeUiMode()
 }

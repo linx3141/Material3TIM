@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.FilledTonalButton
@@ -155,6 +156,15 @@ fun ProfileMaterial(
                     bottomInnerPadding +
                             WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +
                             8.dp
+                    {
+                        // 隐藏我们的覆盖层，露出 TIM 原生界面；原生界面底部有常驻「返回 Material3Tim」按钮。
+                        ProfileEntryMaterial(
+                            icon = Icons.Filled.ExitToApp,
+                            title = stringResource(R.string.profile_native_ui),
+                            supporting = stringResource(R.string.profile_native_ui_summary),
+                            onClick = { enterNativeTimUi(context) },
+                        )
+                    },
                 )
             )
         }
@@ -230,4 +240,12 @@ private fun ProfileEntryMaterial(
             )
         },
     )
+}
+
+/** 「进入原生 TIM 页面」入口：宿主模式隐藏 Compose 覆盖层，独立 App 提示不可用。 */
+internal fun enterNativeTimUi(context: android.content.Context) {
+    val ok = AppDataSources.nativeUiSource?.switchToNativeUi() == true
+    if (!ok) {
+        Toast.makeText(context, context.getString(R.string.native_ui_unavailable), Toast.LENGTH_SHORT).show()
+    }
 }

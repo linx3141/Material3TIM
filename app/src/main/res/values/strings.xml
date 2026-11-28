@@ -474,4 +474,14 @@
     <string name="contact_remark_hint">请输入备注</string>
     <string name="contact_remark_success">备注已更新</string>
     <string name="contact_remark_failed">备注更新失败，请重试</string>
+    <string name="profile_native_ui">进入原生 TIM 页面</string>
+    <string name="profile_native_ui_summary">切换到 TIM 原始界面</string>
+    <string name="native_ui_return_button">返回 Material3Tim</string>
+    <string name="native_ui_unavailable">仅 LSPosed 宿主模式可用</string>
+    <string name="profile_support_development">支持开发</string>
+    <string name="profile_support_development_summary">支付宝 / 微信赞赏码</string>
+    <string name="support_alipay">支付宝</string>
+    <string name="support_alipay_summary">使用支付宝扫码赞赏</string>
+    <string name="support_wechat">微信</string>
+    <string name="support_wechat_summary">使用微信扫码赞赏</string>
 </resources>
