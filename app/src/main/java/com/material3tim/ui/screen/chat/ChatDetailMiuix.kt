@@ -12,6 +12,10 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.shadow
@@ -184,6 +188,8 @@ import top.yukonga.miuix.kmp.icon.extended.AddCircle
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Download
+import top.yukonga.miuix.kmp.anim.folmeSpring
+import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.icon.extended.File
 import top.yukonga.miuix.kmp.icon.extended.Image
 import top.yukonga.miuix.kmp.icon.extended.Link
@@ -447,7 +453,9 @@ internal fun ChatDetailMiuix(
         if (messages.isEmpty()) return@LaunchedEffect
         val prev = scrollAnchor
         val newLastId = messages.lastOrNull()?.id
-        val atBottomNow = !listState.canScrollForward
+        // 实时是否在底部（用户翻看历史时为 false）：不要用上一次消息事件时的旧 atBottom，
+        // 否则「停在历史记录里 → 来新消息」会被误判为在底部而强行拉到底。
+        val atBottomNow = !canScrollForward
         when {
             // 首次定位已在布局前由 requestScrollToItem 完成；这里仅作异常兜底。
             // 锚点 chatId 匹配时按锚点定位（查看器返回/组合重建）；
@@ -461,13 +469,16 @@ internal fun ChatDetailMiuix(
                 listState.scrollToItem(groupedMessages.lastIndex.coerceAtLeast(0), 0)
             }
             newLastId != prev.lastId -> {
-                if (atBottomNow || prev.atBottom) listState.animateScrollToItem(messages.lastIndex)
+                val lastIsMe = messages.lastOrNull()?.isMe == true
+                // 自己刚发的消息：无论当前在哪个位置都滚到底部；
+                // 别人新消息：只有当前确实在底部时才跟随，翻看历史时不打断阅读。
+                if (lastIsMe || atBottomNow) listState.animateScrollToItem(messages.lastIndex)
             }
         }
         scrollAnchor = ChatScrollAnchor(
             count = messages.size,
             lastId = newLastId,
-            atBottom = !listState.canScrollForward,
+            atBottom = atBottomNow,
         )
     }
     // 键盘高度：宿主窗口 Compose ime insets 可能为 0，由 View 层检测兜底；仅用于布局平移，不影响 IME show/hide。
@@ -728,8 +739,7 @@ internal fun ChatDetailMiuix(
                             state = listState,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .nestedScroll(fabNestedScrollConnection)
-                                .scrollEndHaptic()
+                                        .scrollEndHaptic()
                                 .overScrollVertical(),
                             // 首帧消息不被顶栏遮住；滚动时消息从顶栏下方穿过（玻璃顶栏可采样到内容）。
                             contentPadding = PaddingValues(
@@ -2687,15 +2697,22 @@ private fun ChatFloatingActionsMiuix(
     val margin = 16.dp
     val density = LocalDensity.current
     val marginPx = with(density) { margin.roundToPx() }
-    Column(
+    val navBottomDp = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val jumpOffset by animateDpAsState(
+        targetValue = if (bottomButtonVisible) -(fabSize + gap) else 0.dp,
+        // Miuix 自家 folme 弹簧（与左滑引用气泡回弹同一套曲线）。
+        animationSpec = folmeSpring<Dp>(damping = 1f, response = 0.35f),
+        label = "jumpFabOffsetMiuix",
+    )
+    Box(
         modifier = modifier
             .padding(end = margin)
             .offset {
-                // 键盘 inset 在 layout 阶段读取：键盘动画每帧变化时只重排放置，不重组。
-                IntOffset(0, -(bottomOffsetPx + keyboardBottomInset.value.roundToPx() + marginPx))
-            },
-        horizontalAlignment = Alignment.End,
-        verticalArrangement = Arrangement.spacedBy(margin),
+                val bottomInset = maxOf(keyboardBottomInset.value, navBottomDp)
+                IntOffset(0, -(bottomOffsetPx + bottomInset.roundToPx() + marginPx))
+            }
+            .size(width = fabSize, height = fabSize * 2 + gap),
+        contentAlignment = Alignment.BottomEnd,
     ) {
         AnimatedVisibility(
             visible = bottomButtonVisible,
@@ -2710,28 +2727,26 @@ private fun ChatFloatingActionsMiuix(
             ) {
                 Icon(
                     imageVector = Icons.Filled.KeyboardArrowDown,
+    val fabSize = 40.dp
+    val gap = 16.dp
                     contentDescription = stringResource(R.string.chat_back_to_bottom),
                     tint = colorScheme.onPrimary,
                     modifier = Modifier.size(22.dp),
                 )
             }
         }
-        // Miuix：animateFloatAsState 做 alpha/scale 显隐动画（与 M3E AnimatedVisibility 等价）。
-        val backAlpha by animateFloatAsState(
-            targetValue = if (bottomButtonVisible) 1f else 0f,
-            label = "backToBottomAlpha",
-        )
-        val backScale by animateFloatAsState(
-            targetValue = if (bottomButtonVisible) 1f else 0.85f,
-            label = "backToBottomScale",
-        )
-        if (backAlpha > 0.01f) {
-            Box(
-                modifier = Modifier.graphicsLayer {
-                    alpha = backAlpha
-                    scaleX = backScale
-                    scaleY = backScale
-                },
+        AnimatedVisibility(
+            visible = jumpVisible,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .offset(y = jumpOffset),
+            enter = fadeIn() + scaleIn(initialScale = 0.85f),
+            exit = fadeOut() + scaleOut(targetScale = 0.85f),
+        ) {
+            FloatingActionButton(
+                onClick = onJumpEvent,
+                minWidth = fabSize,
+                minHeight = fabSize,
             ) {
                 Icon(
                     imageVector = Icons.Filled.KeyboardArrowUp,

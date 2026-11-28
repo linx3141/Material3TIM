@@ -14,6 +14,8 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.scaleIn
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.onSizeChanged
@@ -286,11 +288,6 @@ internal fun ChatDetailMaterial(
     val jumpTargets = remember(unreadAtMeIndices, eventJumpIndices) {
         (unreadAtMeIndices + eventJumpIndices).distinct().sortedDescending()
     }
-    val fabScope = rememberCoroutineScope()
-
-    // 非 reverseLayout 列表的滚动锚定：进入时到底部、有新消息且原本在底部时跟随；
-    // 加载更早消息时的视口保持由下面的 pendingOlderAnchor 逻辑处理。
-    var scrollAnchor by remember(chat.id) {
     // jumpCursor：下一次跳转距列表末尾的偏移（0 = 最新一条）；每次跳转 +1。
     var jumpCursor by remember(chat.id) { mutableIntStateOf(0) }
     val hasJumpTargets = jumpTargets.isNotEmpty() && jumpCursor < jumpTargets.size
@@ -299,6 +296,11 @@ internal fun ChatDetailMaterial(
         mutableStateOf(ChatScrollAnchor(count = -1, lastId = null, atBottom = true))
     }
     val latestMessagesForRefresh = androidx.compose.runtime.rememberUpdatedState(messages)
+    val fabScope = rememberCoroutineScope()
+
+    // 非 reverseLayout 列表的滚动锚定：进入时到底部、有新消息且原本在底部时跟随；
+    // 加载更早消息时的视口保持由下面的 pendingOlderAnchor 逻辑处理。
+    var scrollAnchor by remember(chat.id) {
     val latestLoadingForRefresh = androidx.compose.runtime.rememberUpdatedState(isLoadingOlder)
 
     // 下拉加载更早消息前记录的视口锚点（第一条可见消息 id + offset）；加载完成后
@@ -428,7 +430,9 @@ internal fun ChatDetailMaterial(
         if (messages.isEmpty()) return@LaunchedEffect
         val prev = scrollAnchor
         val newLastId = messages.lastOrNull()?.id
-        val atBottomNow = !listState.canScrollForward
+        // 实时是否在底部（用户翻看历史时为 false）：不要用上一次消息事件时的旧 atBottom，
+        // 否则「停在历史记录里 → 来新消息」会被误判为在底部而强行拉到底。
+        val atBottomNow = !canScrollForward
         when {
             // 首次定位已在布局前由 requestScrollToItem 完成；这里仅作异常兜底。
             // 锚点 chatId 匹配时按锚点定位（查看器返回/组合重建）；
@@ -442,13 +446,16 @@ internal fun ChatDetailMaterial(
                 listState.scrollToItem(groupedMessages.lastIndex.coerceAtLeast(0), 0)
             }
             newLastId != prev.lastId -> {
-                if (atBottomNow || prev.atBottom) listState.animateScrollToItem(messages.lastIndex)
+                val lastIsMe = messages.lastOrNull()?.isMe == true
+                // 自己刚发的消息：无论当前在哪个位置都滚到底部；
+                // 别人新消息：只有当前确实在底部时才跟随，翻看历史时不打断阅读。
+                if (lastIsMe || atBottomNow) listState.animateScrollToItem(messages.lastIndex)
             }
         }
         scrollAnchor = ChatScrollAnchor(
             count = messages.size,
             lastId = newLastId,
-            atBottom = !listState.canScrollForward,
+            atBottom = atBottomNow,
         )
     }
     // 键盘高度：宿主窗口 Compose ime insets 可能为 0，由 View 层检测兜底；仅用于布局平移，不影响 IME show/hide。
@@ -706,8 +713,7 @@ internal fun ChatDetailMaterial(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
-                        .fillMaxSize()
-                        .nestedScroll(fabNestedScrollConnection),
+                        .fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                 ) {
                     if (groupedMessages.isEmpty() && !initialMessagesLoaded) {
@@ -813,8 +819,6 @@ internal fun ChatDetailMaterial(
                 }
             },
             onBackToBottom = {
-                backToBottomGestureVisible = false
-                downAccumulatedPx = 0f
                 fabScope.launch {
                     listState.animateScrollToItem(groupedMessages.lastIndex.coerceAtLeast(0))
                 }
@@ -2750,7 +2754,15 @@ private fun ChatFloatingActionsMaterial(
     val margin = 16.dp
     val density = LocalDensity.current
     val marginPx = with(density) { margin.roundToPx() }
-    Column(
+    val navBottomDp = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    // 回到底部按钮出现时，向上箭头平滑上移一个「FAB + 间距」，而不是整列布局瞬移。
+    val jumpOffset by animateDpAsState(
+        targetValue = if (bottomButtonVisible) -(fabSize + gap) else 0.dp,
+        // M3E 的空间弹性曲线（与左滑引用气泡同一套 MotionScheme）。
+        animationSpec = MaterialTheme.motionScheme.fastSpatialSpec<Dp>(),
+        label = "jumpFabOffset",
+    )
+    Box(
         modifier = modifier
             .padding(end = margin)
             .offset {
@@ -2761,23 +2773,23 @@ private fun ChatFloatingActionsMaterial(
             }
         }
         AnimatedVisibility(
+    val fabSize = 40.dp
+    val gap = 16.dp
             visible = bottomButtonVisible,
             enter = fadeIn() + scaleIn(initialScale = 0.85f),
             exit = fadeOut() + scaleOut(targetScale = 0.85f),
         ) {
-            SmallFloatingActionButton(
-                onClick = onBackToBottom,
-                modifier = Modifier.size(44.dp),
-                shape = CircleShape,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            ) {
+            SmallFloatingActionButton(onClick = onBackToBottom, shape = CircleShape) {
                 Icon(
                     imageVector = Icons.Filled.KeyboardArrowDown,
                     contentDescription = stringResource(R.string.chat_back_to_bottom),
                 )
             }
-        }
+            // 固定预留两个 FAB 的高度：显隐只改变透明度/位置，不触发整列布局跳动。
+            modifier = Modifier.align(Alignment.BottomEnd),
+            .size(width = fabSize, height = fabSize * 2 + gap),
+        contentAlignment = Alignment.BottomEnd,
+    ) {
     }
 }
         AnimatedVisibility(
