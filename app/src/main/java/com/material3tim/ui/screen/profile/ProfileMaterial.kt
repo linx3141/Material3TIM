@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -135,10 +136,10 @@ fun ProfileMaterial(
                     },
                     {
                         ProfileEntryMaterial(
-                            icon = Icons.Filled.Palette,
-                            title = stringResource(R.string.profile_theme),
-                            supporting = stringResource(R.string.profile_theme_summary),
-                            onClick = { navigator.push(Route.ColorPalette) },
+                            icon = Icons.Filled.VolunteerActivism,
+                            title = stringResource(R.string.profile_support_development),
+                            supporting = stringResource(R.string.profile_support_development_summary),
+                            onClick = { navigator.push(Route.SupportDevelopment) },
                         )
                     },
                     {

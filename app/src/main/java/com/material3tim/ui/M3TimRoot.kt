@@ -98,6 +98,7 @@ import com.material3tim.ui.screen.profile.FavoritesScreen
 import com.material3tim.ui.screen.profile.FilesScreen
 import com.material3tim.ui.screen.profile.ProfilePager
 import com.material3tim.ui.screen.profile.ServicesScreen
+import com.material3tim.ui.screen.profile.SupportDevelopmentScreen
 import com.material3tim.ui.screen.profile.WalletScreen
 import com.material3tim.ui.screen.settings.SettingPager
 import com.material3tim.ui.theme.LocalColorMode
@@ -244,6 +245,9 @@ fun M3TimRoot(
                     ) {
                         entry<Route.Main>(swipeDismiss = swipeDismiss) { mainScreenEntry() }
                         entry<Route.Settings>(swipeDismiss = swipeDismiss) { SettingPager(navigator) }
+                        entry<Route.SupportDevelopment>(swipeDismiss = swipeDismiss) {
+                            SupportDevelopmentScreen()
+                        }
                         entry<Route.ColorPalette>(swipeDismiss = swipeDismiss) { ColorPaletteScreen() }
                         entry<Route.About>(swipeDismiss = swipeDismiss) { AboutScreen() }
                         entry<Route.ChatDetail>(swipeDismiss = swipeDismiss) { key ->

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -169,12 +170,12 @@ fun ProfileMiuix(
                                 onClick = { navigator.push(Route.Settings) },
                             )
                         },
-                        CardItem("theme") {
+                        CardItem("support_development") {
                             ProfileEntryMiuix(
-                                icon = Icons.Filled.Palette,
-                                title = stringResource(R.string.profile_theme),
-                                summary = stringResource(R.string.profile_theme_summary),
-                                onClick = { navigator.push(Route.ColorPalette) },
+                                icon = Icons.Filled.VolunteerActivism,
+                                title = stringResource(R.string.profile_support_development),
+                                summary = stringResource(R.string.profile_support_development_summary),
+                                onClick = { navigator.push(Route.SupportDevelopment) },
                             )
                         },
                         CardItem("about") {
