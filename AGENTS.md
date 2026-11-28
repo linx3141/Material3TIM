@@ -14,8 +14,8 @@
   - `*Miuix.kt`：Miuix（`top.yukonga.miuix.kmp`）。
   - 两者共享 Screen/ViewModel/数据层，只在视觉与弹层组件上分开。
 - **技术栈**：Kotlin 2.4.21 / AGP 9.4.x / Gradle 9.7.x（JDK 21）、Compose BOM 2026.11.01、Miuix 0.9.5-beta03、minSdk 26。
-- **功能范围（已完成）**：消息列表/聊天详情、群文件、群管理（踢人/管理员/禁言/退群/解散/群名/群昵称/群简介/发布公告）、系统通知（免打扰过滤/点击跳转）、全局搜索、用户资料页、群成员、群公告、语音（播放/系统录音机录制发送/听筒扬声器切换）、图片（原图/长图/动图）、贴纸与收藏表情、群助手、新的朋友（含过滤通知）、好友管理（删好友/备注）、ARK 卡片（聊天记录/群公告点击）、M3E 弹窗（Expressive + 预测性返回）、首页会话分组、通知角标/未读跳转、下拉刷新、滑动引用等。
-- **已知限制/待办**：真 MarketFace 贴纸发送部分场景、APNG/魔法表情发送、TIM 原生输入法状态下的一些宿主兼容问题、部分二级页仍示例数据（我的收藏/我的文件/钱包/服务/新的朋友/标签/公众号/表情包）、附件面板剩余项、编辑资料写回、长按菜单「截图」、宽屏 Sidebar Style、通话页暂用 TIM 原生 UI、通知栏消息与已读回执未接（已读回执不做）。Miuix Glass/Voice/File/红包等已完成。详细变更记录见 README 与 git tag。
+- **功能范围（已完成）**：消息列表/聊天详情、群文件（搜索/文件夹独立页面）、群管理（踢人/管理员/禁言/退群/解散/群名/群昵称/群简介/发布公告）、系统通知（免打扰过滤/点击跳转）、全局搜索（分类分组）、用户资料页、群成员、群公告、语音（播放/系统录音机录制发送/听筒扬声器切换）、图片（原图/长图/动图）、贴纸与收藏表情、超级表情/QQ 小黄脸、群助手（转发进入列表）、新的朋友（含过滤通知）、好友管理（删好友/备注）、ARK 卡片（聊天记录/群公告点击）、M3E 弹窗（Expressive + 预测性返回）、首页会话分组、通知角标/未读跳转、下拉刷新、滑动引用、会话事件标签与聊天页事件跳转、DataLine 设备会话、双击加一、聊天顶栏头像、原生 TIM 页面入口、支持开发页、M3E 专属 Launcher3 悬浮底栏等。
+- **已知限制/待办**：真 MarketFace 贴纸发送部分场景、APNG/魔法表情发送、TIM 原生输入法状态下的一些宿主兼容问题、部分二级页仍示例数据（我的收藏/我的文件/钱包/服务/标签/公众号/表情包）、附件面板剩余项、编辑资料写回、长按菜单「截图」、宽屏 Sidebar Style、Miuix 固定头页面（搜索/群文件面包屑）的玻璃顶栏穿内容效果、通话页暂用 TIM 原生 UI、通知栏消息与已读回执未接（已读回执不做）。Miuix Glass/Voice/File/红包等已完成。详细变更记录见 README 与 git tag。
 
 ## 2. 架构分层
 
@@ -63,7 +63,7 @@ adb -s <DEVICE_SERIAL> shell am force-stop com.tencent.tim
 adb -s <DEVICE_SERIAL> shell am start -n com.tencent.tim/com.tencent.mobileqq.activity.SplashActivity
 ```
 
-- **版本号**：`app/build.gradle.kts` 中 `versionName` + `versionCode`（当前 **0.1.0 / 1**，首个公开版本）；**只有用户明确要求发版时才递增，日常修复不要 bump 版本号**。
+- **版本号**：`app/build.gradle.kts` 中 `versionName` + `versionCode`（当前 **0.2.0 / 2**；0.1.0 为首个公开版本）；**只有用户明确要求发版时才递增，日常修复不要 bump 版本号**。
 - **Git**：按你的本地 Git 配置提交（如需签名可用 `git commit -S`）；
   发布时 `git tag -a vX.Y.Z -m "..."`。
 - **安装策略（用户已授权）**：构建成功后默认 **安装 + 强制停止 TIM + 重新打开**，不必每次询问；
@@ -97,6 +97,20 @@ adb -s <DEVICE_SERIAL> shell am start -n com.tencent.tim/com.tencent.mobileqq.ac
 - **注释**：重要逻辑写中文注释，说明「为什么」而不是「是什么」。
 
 ## 5.1 基础控件与弹层约定（优先复用，禁止另造轮子）
+
+### 搜索栏统一规范
+- **非特殊页面一律复用首页消息列表顶部的搜索栏**，不要自创搜索样式：
+  - M3E：`ui/component/material/SearchBar.kt` 的 `SearchAppBar`（标题 + 胶囊搜索栏 + 展开搜索层）；
+  - Miuix：`ui/component/miuix/SuperSearchBar.kt` 的 `SearchBarFake` / `InputField`（与消息页一致的胶囊）；需要完整搜索浮层时用 `SearchStatus.SearchBox` / `SearchPager`；
+- 搜索结果展示样式跟页面列表一致（M3E `SegmentedColumn/SegmentedListItem`，Miuix `groupedCardItems`）；
+- 输入搜索需加防抖（约 300ms），查询期间取消/丢弃旧请求结果。
+
+### 群文件 / 历史消息约定
+- **群文件文件夹是独立路由页面**（`Route.ChatFiles(chatId, folderId, folderName)`），点文件夹只 push，不做当前页刷新；
+- 群文件搜索走 TIM SSO `GroupFileAppSvr.GetFileSearch`（`tencent.im.cs.cmd0x383`），不要使用 kernel `searchGroupFileByWord`；
+- 拉取文件夹列表后必须校验条目的 `parentFolderId` 与请求目录一致：TIM 部分 OIDB 组合会忽略 folderId 返回上层目录内容（空文件夹显示父目录文件的根因）；
+- 群文件加载动画：M3E 用 `ContainedLoadingIndicator`，Miuix 用 `InfiniteProgressIndicator`；
+- **更早消息分页缓存原始 MsgRecord**（`OlderState.rawRecords`），返回时重新 map；图片/视频缩略图异步下载完成后通过 `reloadOlderMessages` 回填，聊天页做有限次轮询，避免历史图片永久空白。
 
 ### 长按/点击弹出的 popup 菜单（消息气泡、群成员、收藏表情、会话卡片、附件相机等）
 - **M3E**：`OffsetAnchoredExpressiveMenu(expanded, onDismissRequest, anchorOffset)` + `SelectableDropdownMenuItem`
