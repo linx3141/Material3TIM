@@ -160,6 +160,12 @@ interface MessageSource {
     /** 加载更早的一页消息；返回累计已加载的更早消息（升序），null 表示失败。 */
     fun loadOlderMessages(chatId: String, count: Int = 40): List<ChatMessage>?
 
+    /**
+     * 重新映射已加载的更早消息（不发起新分页），用于图片/视频缩略图异步下载完成后的刷新。
+     * 失败/无缓存返回 null。
+     */
+    fun reloadOlderMessages(chatId: String): List<ChatMessage>? = null
+
     /** 直接按 seq 取目标消息附近的一段历史（用于点击引用跳转到很早的消息）。 */
     fun loadHistoryAround(chatId: String, seq: Long, count: Int = 60): List<ChatMessage>? = null
 

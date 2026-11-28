@@ -299,6 +299,36 @@ private fun ChatDetailContent(
         }
     }
 
+    // 更早消息里的图片/视频缩略图是内核异步下载的：首次映射时路径为空，
+    // 下载完成后需要重新 map 才能显示。这里在 olderMessages 里仍有缺失媒体时轮询刷新
+    // （只重新映射已缓存 record，不会继续向上加载新分页）。
+    var olderMediaReloadAttempts by remember(chat.id) { mutableIntStateOf(0) }
+    androidx.compose.runtime.LaunchedEffect(chat.id, olderMessages) {
+        if (!liveMessages || olderMessages.isEmpty()) return@LaunchedEffect
+        fun missingMedia(message: ChatMessage): Boolean =
+            message.parts.any { it.kind == ChatPartKind.IMAGE && it.imagePath.isNullOrBlank() } ||
+                (message.type == ChatMessageType.IMAGE && message.imagePath.isNullOrBlank()) ||
+                (message.type == ChatMessageType.VIDEO && message.videoThumbPath.isNullOrBlank())
+        val hasMissing = olderMessages.any(::missingMedia)
+        if (!hasMissing) {
+            olderMediaReloadAttempts = 0
+            return@LaunchedEffect
+        }
+        if (olderMediaReloadAttempts >= 15) return@LaunchedEffect
+        delay(1200)
+        olderMediaReloadAttempts += 1
+        val refreshed = withContext(Dispatchers.IO) {
+            AppDataSources.messageSource?.reloadOlderMessages(chat.id)
+        }
+        if (refreshed != null && refreshed.isNotEmpty()) {
+            // 保留 loadHistoryAround/事件跳转额外并入的 chunk，按 msgId 合并。
+            val merged = (refreshed + olderMessages)
+                .distinctBy { it.chatRecordMsgId }
+                .sortedBy { it.timestampMs }
+            if (merged != olderMessages) olderMessages = merged
+        }
+    }
+
     // 点击引用条：静默加载历史直到找到被引用消息，再让聊天页滚动定位。
     var pendingJumpMessage by remember(chat.id) { mutableStateOf<ChatMessage?>(null) }
 

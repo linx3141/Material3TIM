@@ -729,9 +729,14 @@ internal object TimBridge {
 
     private val unknownElementLogged = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
 
-    /** chatId -> 更早消息分页状态（下一页的 seq 游标 + 已加载的更早消息）。 */
+    /** chatId -> 更早消息分页状态（下一页的 seq 游标 + 原始 MsgRecord）。
+     *
+     * 缓存原始 MsgRecord 而不是已映射的 ChatMessage：图片/视频缩略图是内核异步下载的，
+     * 下载完成后只有重新 map 才能拿到本地路径；旧实现缓存 ChatMessage 会导致
+     * 「下拉加载的更早消息图片永远空白」。
+     */
     private class OlderState(var nextSeq: Long) {
-        val cached: MutableList<ChatMessage> = mutableListOf()
+        val rawRecords: MutableList<Any> = java.util.Collections.synchronizedList(mutableListOf())
     }
 
     private val olderStates = ConcurrentHashMap<String, OlderState>()
@@ -4261,10 +4266,15 @@ internal object TimBridge {
             if (mapped.isEmpty()) return null
             val existing = olderStates[chatId]
             if (existing != null) {
-                val known = existing.cached.mapTo(HashSet()) { it.id }
-                val extra = mapped.map { it.message.copy(timeSeparator = null) }
-                    .filterNot { it.id in known }
-                existing.cached.addAll(0, extra)
+                val known = synchronized(existing.rawRecords) {
+                    existing.rawRecords.toList()
+                }.mapNotNull { r -> (invokeGetter(r, "getMsgId") as? Number)?.toLong() }
+                    .toHashSet()
+                val extras = records.filterNotNull().filter { record ->
+                    val id = (invokeGetter(record, "getMsgId") as? Number)?.toLong() ?: 0L
+                    id != 0L && id !in known
+                }
+                synchronized(existing.rawRecords) { existing.rawRecords.addAll(0, extras) }
                 val minSeq = mapped.minOf { it.sortTime }
                 if (existing.nextSeq <= 0L || existing.nextSeq > minSeq) {
                     existing.nextSeq = minSeq
@@ -4290,7 +4300,10 @@ internal object TimBridge {
         val service = msgService ?: return null
         val cl = hostClassLoader() ?: return null
         val state = olderStates[chatId] ?: return null
-        if (state.nextSeq <= 0L) return state.cached.toList()
+        if (state.nextSeq <= 0L) {
+            reloadOlderMediaOnly(chatId, state)
+            return cachedOlderMessages(chatId, state)
+        }
         return try {
             val callbackClass = Class.forName(
                 "com.tencent.qqnt.kernel.nativeinterface.IMsgOperateCallback",
@@ -4316,7 +4329,7 @@ internal object TimBridge {
             latch.await(2_500L, TimeUnit.MILLISECONDS)
             if (errCode != 0) {
                 Log.w(TAG, "loadOlderMessages($chatId) err=$errCode")
-                if (records.isEmpty()) return state.cached.toList()
+                if (records.isEmpty()) return cachedOlderMessages(chatId, state)
             }
             val cursor = state.nextSeq
             val older = records
@@ -4328,19 +4341,29 @@ internal object TimBridge {
                 .sortedWith(compareBy { it.sortTime })
             if (older.isEmpty()) {
                 state.nextSeq = 0L
-                Log.i(TAG, "loadOlderMessages($chatId): no more, total=${state.cached.size}")
-                return state.cached.toList()
+                Log.i(TAG, "loadOlderMessages($chatId): no more")
+                return cachedOlderMessages(chatId, state)
             }
+            // 追加原始 record（按 msgId 去重），后续 reload 时重新 map 才能拿到下载后的图片路径。
+            val cursorIds = synchronized(state.rawRecords) {
+                state.rawRecords.mapNotNull { r ->
+                    (invokeGetter(r, "getMsgId") as? Number)?.toLong()?.takeIf { it != 0L }
+                }.toHashSet()
+            }
+            val newRecords = records.filterNotNull().filter { record ->
+                val id = (invokeGetter(record, "getMsgId") as? Number)?.toLong() ?: 0L
+                id != 0L && id !in cursorIds
+            }
+            synchronized(state.rawRecords) { state.rawRecords.addAll(0, newRecords) }
             triggerMissingImageDownloads(chatId, records)
-            val mappedMessages = older.map { it.message.copy(timeSeparator = null) }
-            state.cached.addAll(0, mappedMessages)
             state.nextSeq = older.minOf { it.sortTime }
             Log.i(
                 TAG,
-                "loadOlderMessages($chatId): +${mappedMessages.size}, total=${state.cached.size}, " +
-                    "nextSeq=${state.nextSeq}",
+                "loadOlderMessages($chatId): +${older.size}, cachedRecords=" +
+                    synchronized(state.rawRecords) { state.rawRecords.size } +
+                    ", nextSeq=${state.nextSeq}",
             )
-            state.cached.toList()
+            cachedOlderMessages(chatId, state)
         } catch (t: Throwable) {
             Log.e(TAG, "loadOlderMessages failed: ${t.javaClass.simpleName} ${t.message}", t)
             null
@@ -9403,6 +9426,9 @@ internal object TimBridge {
             ?: thumbPath
             ?: customDownloadPath
             ?: downloadedMediaByElement[elementId]?.takeIf { pathUsable(it) }
+            // 内核缩略图下载完成（downType=2）只会写入这个 map：必须回退到这里，
+            // 否则下拉加载的历史图片即使下载完成也一直显示占位。
+            ?: downloadedImageThumbs[msgId]?.takeIf { pathUsable(it) }
             ?: downloadedImagePath(msgId)
             ?: (pic?.let { invokeGetter(it, "getSourcePath") } as? String)
                 ?.takeIf { it.isNotBlank() }
@@ -10646,6 +10672,31 @@ internal object TimBridge {
         if (requested > 0) {
             Log.i(TAG, "image download: pics=$picCount requested=$requested chat=$chatId")
         }
+    }
+
+    /** 重新 map 已缓存的更早消息（图片/视频下载完成后本地路径才会出现）。 */
+    private fun cachedOlderMessages(chatId: String, state: OlderState): List<ChatMessage> =
+        synchronized(state.rawRecords) {
+            state.rawRecords.toList()
+        }.mapNotNull { record -> runCatching { mapMsgRecord(chatId, record) }.getOrNull() }
+            .sortedWith(compareBy { it.sortTime })
+            .map { it.message.copy(timeSeparator = null) }
+
+    private fun reloadOlderMediaOnly(chatId: String, state: OlderState) {
+        val records = synchronized(state.rawRecords) { state.rawRecords.toList() }
+        if (records.isNotEmpty()) {
+            runCatching { triggerMissingImageDownloads(chatId, records) }
+        }
+    }
+
+    /** 刷新已加载的更早消息（不发起新的分页请求）：重新触发缺失媒体下载并重新 map。 */
+    fun reloadOlderMessages(chatId: String): List<ChatMessage>? {
+        if (!isHost) return null
+        val state = olderStates[chatId] ?: return null
+        val records = synchronized(state.rawRecords) { state.rawRecords.toList() }
+        if (records.isEmpty()) return emptyList()
+        triggerMissingImageDownloads(chatId, records)
+        return cachedOlderMessages(chatId, state)
     }
 
     private fun formatSeparator(timeMillis: Long): String {
@@ -22391,6 +22442,9 @@ internal class TimMessageSource : MessageSource {
 
     override fun loadOlderMessages(chatId: String, count: Int): List<ChatMessage>? =
         TimBridge.loadOlderMessages(chatId, count)
+
+    override fun reloadOlderMessages(chatId: String): List<ChatMessage>? =
+        TimBridge.reloadOlderMessages(chatId)
 
     override fun loadChatImageOriginal(chatId: String, msgId: Long, elementId: Long): String? =
         TimBridge.loadChatImageOriginal(chatId, msgId, elementId)
