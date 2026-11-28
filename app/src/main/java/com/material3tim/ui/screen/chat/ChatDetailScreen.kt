@@ -66,6 +66,7 @@ import com.material3tim.data.model.ChatMessageType
 import com.material3tim.data.model.ChatPartKind
 import com.material3tim.data.repository.ChatRepository
 import com.material3tim.data.repository.LiveChats
+import com.material3tim.data.repository.SettingsRepositoryImpl
 import com.material3tim.data.repository.MessageRepository
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.data.source.AtTarget
@@ -410,7 +411,6 @@ private fun ChatDetailContent(
     val plusOneDoneLabel = stringResource(R.string.chat_plus_one_done)
     val plusOneAlreadyLabel = stringResource(R.string.chat_plus_one_already)
     val plusOneUnsupportedLabel = stringResource(R.string.chat_plus_one_unsupported)
-    val plusOneUnavailableLabel = stringResource(R.string.chat_plus_one_unavailable)
     // 「双击加一」设置：气泡右侧显示 +1 / 双击复读。设置页切换后回到聊天页（ON_RESUME）重新读取。
     var showDoubleTapPlusOne by remember {
         mutableStateOf(runCatching { SettingsRepositoryImpl().enableDoubleTapPlusOne }.getOrDefault(false))
@@ -434,6 +434,7 @@ private fun ChatDetailContent(
         plusOneSettingsLifecycle.lifecycle.addObserver(observer)
         onDispose { plusOneSettingsLifecycle.lifecycle.removeObserver(observer) }
     }
+    val plusOneUnavailableLabel = stringResource(R.string.chat_plus_one_unavailable)
     val plusOneFailedLabel = stringResource(R.string.chat_plus_one_failed)
     val showToast: (String) -> Unit = { text ->
         android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
@@ -535,6 +536,29 @@ private fun ChatDetailContent(
         }
     }
 
+    // 「有新文件 / 有人回复我 / 群公告」等事件消息可能不在首屏 40 条里：
+    // 按最近会话给出的事件 seq 拉取附近历史，否则聊天页无法出现 ↑ 跳转按钮。
+    androidx.compose.runtime.LaunchedEffect(chat.id, chat.previewEventSeqs, initialMessagesLoaded) {
+        if (!liveMessages || !initialMessagesLoaded) return@LaunchedEffect
+        val seqs = chat.previewEventSeqs
+        if (seqs.isEmpty()) return@LaunchedEffect
+        val source = AppDataSources.messageSource ?: return@LaunchedEffect
+        val loadedSeqs = (baseMessages + olderMessages + localMessages)
+            .asSequence().mapNotNull { it.seq.takeIf { s -> s > 0L } }.toHashSet()
+        val missing = seqs.filter { it > 0L && it !in loadedSeqs }.take(3)
+        if (missing.isEmpty()) return@LaunchedEffect
+        val chunks = withContext(Dispatchers.IO) {
+            missing.mapNotNull { seq ->
+                runCatching { source.loadHistoryAround(chat.id, seq, 80) }.getOrNull()
+            }
+        }
+        if (chunks.isNotEmpty()) {
+            olderMessages = (olderMessages + chunks.flatten())
+                .distinctBy { it.chatRecordMsgId }
+                .sortedBy { it.timestampMs }
+        }
+    }
+
     // 进入聊天即把该会话标记为已读（TIM 原生行为）：内核置已读，同时刷新会话列表角标。
     androidx.compose.runtime.LaunchedEffect(chat.id, liveMessages) {
         if (!liveMessages) return@LaunchedEffect
@@ -561,29 +585,6 @@ private fun ChatDetailContent(
                 message.parts.any { part ->
                     part.kind == ChatPartKind.IMAGE && part.imagePath.isNullOrBlank()
                 } ||
-    // 「有新文件 / 有人回复我 / 群公告」等事件消息可能不在首屏 40 条里：
-    // 按最近会话给出的事件 seq 拉取附近历史，否则聊天页无法出现 ↑ 跳转按钮。
-    androidx.compose.runtime.LaunchedEffect(chat.id, chat.previewEventSeqs, initialMessagesLoaded) {
-        if (!liveMessages || !initialMessagesLoaded) return@LaunchedEffect
-        val seqs = chat.previewEventSeqs
-        if (seqs.isEmpty()) return@LaunchedEffect
-        val source = AppDataSources.messageSource ?: return@LaunchedEffect
-        val loadedSeqs = (baseMessages + olderMessages + localMessages)
-            .asSequence().mapNotNull { it.seq.takeIf { s -> s > 0L } }.toHashSet()
-        val missing = seqs.filter { it > 0L && it !in loadedSeqs }.take(3)
-        if (missing.isEmpty()) return@LaunchedEffect
-        val chunks = withContext(Dispatchers.IO) {
-            missing.mapNotNull { seq ->
-                runCatching { source.loadHistoryAround(chat.id, seq, 80) }.getOrNull()
-            }
-        }
-        if (chunks.isNotEmpty()) {
-            olderMessages = (olderMessages + chunks.flatten())
-                .distinctBy { it.chatRecordMsgId }
-                .sortedBy { it.timestampMs }
-        }
-    }
-
                     (message.type == ChatMessageType.IMAGE && message.imagePath.isNullOrBlank()) ||
                     (message.type == ChatMessageType.VIDEO && message.videoThumbPath.isNullOrBlank()) ||
                     (message.type == ChatMessageType.VOICE && message.mediaPath.isNullOrBlank()) ||
@@ -1045,6 +1046,8 @@ private fun ChatDetailContent(
         navigator.push(Route.ChatNotice(message.chatId.ifBlank { chat.id }))
     }
     // 点消息头像进入统一「用户资料」页；系统消息/无发送者 uid 的消息不响应。
+    // DataLine 设备会话（我的手机/电脑/平板）里消息的 senderUid 可能指向别的设备，
+    // 资料页必须按「当前会话的设备类型」显示，否则会出现点我的电脑却显示我的手机。
     val onAvatarClick: (ChatMessage) -> Unit = { message ->
         if (chat.dataLineKind != 0) {
             navigator.push(
@@ -1102,8 +1105,6 @@ private fun ChatDetailContent(
                 context.getString(R.string.chat_recall_unsupported),
                 android.widget.Toast.LENGTH_SHORT,
             ).show()
-    // DataLine 设备会话（我的手机/电脑/平板）里消息的 senderUid 可能指向别的设备，
-    // 资料页必须按「当前会话的设备类型」显示，否则会出现点我的电脑却显示我的手机。
         } else {
             scope.launch {
                 val ok = withContext(Dispatchers.IO) {
@@ -1327,30 +1328,6 @@ private fun ChatDetailContent(
             ).show()
         }
     }
-    // 长按图片/表情「添加到表情」：IO 调 emojiSource，Toast 反馈。
-    val onAddToFavorite: (ChatMessage) -> Unit = { message ->
-        scope.launch {
-            val source = AppDataSources.emojiSource
-            val elementId = message.elementId.takeIf { it != 0L }
-                ?: message.parts.firstOrNull {
-                    it.kind == com.material3tim.data.model.ChatPartKind.IMAGE
-                }?.elementId ?: 0L
-            val ok = if (source == null) {
-                false
-            } else {
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        source.addMessageToFavorites(chat.id, message.msgId, elementId)
-                    }.getOrDefault(false)
-                }
-            }
-            android.widget.Toast.makeText(
-                context,
-                if (ok) R.string.emoji_added_to_favorites else R.string.emoji_add_to_favorites_failed,
-                android.widget.Toast.LENGTH_SHORT,
-            ).show()
-        }
-    }
     // 超级表情：发送 FaceElement（bridge 构造 sticker 字段）；失败 Toast 反馈。
     val onSendSuperEmoji: (SuperEmojiItem) -> Unit = { item ->
         scope.launch {
@@ -1413,6 +1390,30 @@ private fun ChatDetailContent(
         }
     }
 
+    // 长按图片/表情「添加到表情」：IO 调 emojiSource，Toast 反馈。
+    val onAddToFavorite: (ChatMessage) -> Unit = { message ->
+        scope.launch {
+            val source = AppDataSources.emojiSource
+            val elementId = message.elementId.takeIf { it != 0L }
+                ?: message.parts.firstOrNull {
+                    it.kind == com.material3tim.data.model.ChatPartKind.IMAGE
+                }?.elementId ?: 0L
+            val ok = if (source == null) {
+                false
+            } else {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        source.addMessageToFavorites(chat.id, message.msgId, elementId)
+                    }.getOrDefault(false)
+                }
+            }
+            android.widget.Toast.makeText(
+                context,
+                if (ok) R.string.emoji_added_to_favorites else R.string.emoji_add_to_favorites_failed,
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
     val onSend: (String) -> Unit = { raw ->
         val text = raw.trim()
         if (text.isNotEmpty()) {
@@ -1525,9 +1526,9 @@ private fun ChatDetailContent(
             onForwardMessage = onForwardMessage,
             onPlusOne = onPlusOne,
             plusOneMessageIds = plusOneMessageIds,
-            onDeleteMessage = onDeleteMessage,
             showPlusOne = showDoubleTapPlusOne,
             showTopBarAvatar = showChatTopBarAvatar,
+            onDeleteMessage = onDeleteMessage,
             onRecallMessage = onRecallMessage,
             onFileClick = onFileClick,
             downloadingFileMsgId = downloadingFileMsgId,
@@ -1547,6 +1548,8 @@ private fun ChatDetailContent(
             onCameraAction = onCameraAction,
             onSendCustomEmoji = ::sendCustomEmoji,
             onSendStickerPackEmoji = onSendStickerPackEmoji,
+            onSendSuperEmoji = onSendSuperEmoji,
+            onSendSystemFace = onSendSystemFace,
             imeController = imeController,
         )
 
@@ -1573,16 +1576,14 @@ private fun ChatDetailContent(
             selectedMessageIds = selectedMessageIds,
             onToggleSelectMessage = onToggleSelectMessage,
             onEnterSelection = onEnterSelection,
-            onSendSuperEmoji = onSendSuperEmoji,
-            onSendSystemFace = onSendSystemFace,
             onExitSelection = onExitSelection,
             onForwardSelected = onForwardSelected,
             onForwardMessage = onForwardMessage,
             onPlusOne = onPlusOne,
             plusOneMessageIds = plusOneMessageIds,
-            onDeleteMessage = onDeleteMessage,
             showPlusOne = showDoubleTapPlusOne,
             showTopBarAvatar = showChatTopBarAvatar,
+            onDeleteMessage = onDeleteMessage,
             onRecallMessage = onRecallMessage,
             onFileClick = onFileClick,
             downloadingFileMsgId = downloadingFileMsgId,
@@ -1602,6 +1603,8 @@ private fun ChatDetailContent(
             onCameraAction = onCameraAction,
             onSendCustomEmoji = ::sendCustomEmoji,
             onSendStickerPackEmoji = onSendStickerPackEmoji,
+            onSendSuperEmoji = onSendSuperEmoji,
+            onSendSystemFace = onSendSystemFace,
             imeController = imeController,
         )
         }
@@ -1620,6 +1623,9 @@ internal class ChatListScrollState {
 
 internal val LocalChatListScrollState = compositionLocalOf<ChatListScrollState?> { null }
 
+/** 当前聊天是否是 DataLine 设备会话（0=普通；1/2/3/4 见 DataLine）。聊天消息头像据此渲染设备图标。 */
+internal val LocalChatDataLineKind = androidx.compose.runtime.staticCompositionLocalOf { 0 }
+
 /** 聊天列表滚动锚点（用于加载更早消息时保持视口）。 */
 internal data class ChatScrollAnchor(
     val count: Int,
@@ -1630,8 +1636,6 @@ internal data class ChatScrollAnchor(
 /**
  * 合并「已加载的更早消息」与「最新一页 + 本地发送」：按 id 去重并保持升序，
  * 然后用 timestampMs 重新计算时间分隔条（跨批次衔接正确）。
-            onSendSuperEmoji = onSendSuperEmoji,
-            onSendSystemFace = onSendSystemFace,
  */
 internal fun mergeHistoryMessages(
     older: List<ChatMessage>,
@@ -1741,9 +1745,6 @@ private fun ChatDetailPlaceholder(
                 color = color,
             )
             Spacer(Modifier.height(12.dp))
-/** 当前聊天是否是 DataLine 设备会话（0=普通；1/2/3/4 见 DataLine）。聊天消息头像据此渲染设备图标。 */
-internal val LocalChatDataLineKind = androidx.compose.runtime.staticCompositionLocalOf { 0 }
-
             if (failed) {
                 Text(
                     text = stringResource(R.string.group_files_load_failed),
@@ -1812,6 +1813,7 @@ internal fun sampleTimId(avatarSeed: Int): String =
 /** 群聊/单聊顶栏副标题。 */
 @Composable
 internal fun chatSubtitle(chat: ChatItem): String? = when {
+    chat.dataLineKind != 0 -> stringResource(R.string.chat_dataline_subtitle)
     chat.isGroup && chat.memberCount > 0 -> stringResource(R.string.chat_member_count, chat.memberCount)
     chat.isOnline -> stringResource(R.string.chat_online)
     else -> null
@@ -1931,7 +1933,6 @@ private fun copyUriToCache(context: Context, uri: Uri, fallbackName: String): Fi
         "chat_media/${System.currentTimeMillis()}_${System.nanoTime()}",
     ).apply { mkdirs() }
     val target = File(dir, safeName)
-    chat.dataLineKind != 0 -> stringResource(R.string.chat_dataline_subtitle)
     context.contentResolver.openInputStream(uri)?.use { input ->
         target.outputStream().use { output -> input.copyTo(output) }
     } ?: return@runCatching null

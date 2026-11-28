@@ -22,12 +22,12 @@ data class SettingsUiState(
     /** Launcher3 微件页同款悬浮底栏。 */
     val enableLauncherFloatingToolbar: Boolean = false,
     val enableNavigationBadge: Boolean = true,
-    /** 是否显示顶栏（Miuix 页面通用）。 */
-    val showTopAppBar: Boolean = true,
     /** 双击加一：气泡右侧 +1 / 双击复读。 */
     val enableDoubleTapPlusOne: Boolean = false,
     /** 聊天页顶栏名称左侧显示头像。 */
     val showChatTopBarAvatar: Boolean = true,
+    /** 是否显示顶栏（Miuix 页面通用）。 */
+    val showTopAppBar: Boolean = true,
     /** 顶栏风格：0=Original（普通 TopAppBar），1=Glass（GlassTopAppBar）。 */
     val topAppBarStyle: Int = 1,
     /** 是否显示底栏/侧栏（Miuix 主导航）。 */
@@ -46,6 +46,6 @@ data class SettingsScreenActions(
     val onOpenTheme: () -> Unit,
     val onSetUiModeIndex: (Int) -> Unit,
     val onOpenAbout: () -> Unit,
-)
     val onSetDoubleTapPlusOne: (Boolean) -> Unit,
     val onSetShowChatTopBarAvatar: (Boolean) -> Unit,
+)

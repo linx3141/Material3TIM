@@ -113,6 +113,7 @@ fun ContactsPagerMaterial(
                 },
                 scrollBehavior = scrollBehavior,
                 defaultContent = { _, _ -> },
+                alwaysCollapsedTopBar = true,
                 searchContent = { bottomPadding, closeSearch ->
                     if (searchResults.isEmpty()) {
                         Box(
@@ -130,8 +131,7 @@ fun ContactsPagerMaterial(
                         LazyColumn(
                             state = searchListState,
                             modifier = Modifier
-                                .fillMaxSize()
-                                .nestedScroll(scrollBehavior.nestedScrollConnection),
+                                .fillMaxSize(),
                             verticalArrangement = Arrangement.spacedBy(2.dp),
                             contentPadding = PaddingValues(
                                 start = 16.dp,
@@ -158,8 +158,7 @@ fun ContactsPagerMaterial(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
+                .padding(innerPadding),
             verticalArrangement = Arrangement.spacedBy(2.dp),
             contentPadding = PaddingValues(
                 start = 16.dp,

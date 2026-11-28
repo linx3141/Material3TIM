@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -72,6 +73,7 @@ fun ProfileMiuix(
     bottomInnerPadding: Dp,
 ) {
     val profile = ChatRepository.profile
+    val context = LocalContext.current
     val scrollBehavior = MiuixScrollBehavior()
     val listState = rememberLazyListState()
     val enableBlur = LocalEnableBlur.current
@@ -86,6 +88,7 @@ fun ProfileMiuix(
                     isContentScrolled = listState.canScrollBackward,
                     backdrop = backdrop,
                     scrollBehavior = scrollBehavior,
+                    expandable = false,
                 )
             },
             popupHost = { },
@@ -186,10 +189,6 @@ fun ProfileMiuix(
                                 onClick = { navigator.push(Route.About) },
                             )
                         },
-                    ),
-                )
-                item(key = "bottom_padding") {
-                    Spacer(
                         CardItem("native_ui") {
                             // 隐藏 Compose 覆盖层，切到 TIM 原生界面。
                             ProfileEntryMiuix(
@@ -199,6 +198,10 @@ fun ProfileMiuix(
                                 onClick = { enterNativeTimUi(context) },
                             )
                         },
+                    ),
+                )
+                item(key = "bottom_padding") {
+                    Spacer(
                         Modifier.height(
                             bottomInnerPadding +
                                     WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +

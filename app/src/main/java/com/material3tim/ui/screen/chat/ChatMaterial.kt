@@ -284,6 +284,7 @@ fun ChatPagerMaterial(
                         )
                     }
                 },
+                alwaysCollapsedTopBar = true,
                 searchContent = { bottomPadding, closeSearch ->
                     Box(
                         modifier = Modifier
@@ -380,9 +381,7 @@ fun ChatPagerMaterial(
             val normalChats = remember(uiState.chats) { uiState.chats.filterNot { it.isPinned } }
             LazyColumn(
                 state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
+                modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 contentPadding = PaddingValues(
                     start = 16.dp,
@@ -510,8 +509,8 @@ internal fun ChatListRowMaterial(
             selected = false,
             onClick = onClick,
             leadingContent = {
-                    GroupAssistantAvatarMaterial()
                 if (chat.id == GroupAssistantChatId) {
+                    GroupAssistantAvatarMaterial()
                 } else if (chat.dataLineKind != 0) {
                     DataLineAvatar(kind = chat.dataLineKind)
                 } else {

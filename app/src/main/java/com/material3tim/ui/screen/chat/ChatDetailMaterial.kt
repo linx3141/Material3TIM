@@ -21,9 +21,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.foundation.layout.offset
 import java.io.File
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 
 import com.material3tim.ui.component.AnimatedOrStaticImage
 import com.material3tim.ui.component.rememberLocalImage
@@ -80,21 +80,21 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
@@ -152,28 +152,32 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.material3tim.R
 import com.material3tim.ui.navigation3.LocalNavigator
 import com.material3tim.ui.navigation3.Route
 import com.material3tim.data.model.ChatItem
 import com.material3tim.data.model.ChatMessage
+import com.material3tim.data.model.ChatPart
 import com.material3tim.data.repository.LiveProfile
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.data.model.ChatMember
 import com.material3tim.data.model.CustomEmoji
+import com.material3tim.data.model.SuperEmojiItem
+import com.material3tim.data.model.SystemFaceItem
 import com.material3tim.data.source.AtTarget
 import com.material3tim.data.model.ChatMessageType
 import com.material3tim.data.model.ChatPartKind
 import com.material3tim.ui.component.ChatAvatar
-import com.material3tim.data.model.SuperEmojiItem
-import com.material3tim.data.model.SystemFaceItem
+import com.material3tim.ui.component.SuperEmojiAnimation
+import com.material3tim.ui.component.DataLineAvatar
 import com.material3tim.ui.component.ime.ChatImeController
 import com.material3tim.ui.component.ime.rememberKeyboardHeightDp
 import com.material3tim.ui.component.DraggableWavyProgressBar
@@ -187,8 +191,6 @@ import com.material3tim.ui.component.material.expressiveTopAppBarColors
  * 聊天详情页（Material 3 Expressive 风格）。
  *
  * 结构：紧凑顶栏（返回 / 会话名 + 副标题 / 更多 + 单聊通话入口）
-import com.material3tim.ui.component.SuperEmojiAnimation
-import com.material3tim.ui.component.DataLineAvatar
  * + 底部锚定的反向消息列表（时间分隔、系统消息、六种气泡，同一发送者连续消息按
  *   M3 Expressive 分段圆角成组）
  * + 输入栏（表情面板在输入栏上方、附件面板在输入栏下方，二者互斥）
@@ -200,9 +202,9 @@ import com.material3tim.ui.component.DataLineAvatar
 internal fun ChatDetailMaterial(
     chat: ChatItem,
     messages: List<ChatMessage>,
+    showTopBarAvatar: Boolean = true,
     composer: ChatComposerState,
     onBack: () -> Unit,
-    showTopBarAvatar: Boolean = true,
     onOpenInfo: () -> Unit,
     onSend: (String) -> Unit,
     replyTarget: ChatMessage? = null,
@@ -231,24 +233,24 @@ internal fun ChatDetailMaterial(
     onForwardMessage: (ChatMessage) -> Unit = {},
     onPlusOne: (ChatMessage) -> Unit = {},
     plusOneMessageIds: Set<Long> = emptySet(),
+    showPlusOne: Boolean = false,
     jumpTarget: ChatMessage? = null,
     onJumpConsumed: () -> Unit = {},
     onLoadOlder: () -> Unit = {},
     isLoadingOlder: Boolean = false,
     hasMoreOlder: Boolean = true,
-    showPlusOne: Boolean = false,
     onAttachAction: (ChatAttachAction) -> Unit = {},
     onCameraAction: (Boolean) -> Unit = {},
     onSendCustomEmoji: (CustomEmoji) -> Unit = {},
     onSendStickerPackEmoji: (packId: String, eId: String) -> Unit = { _, _ -> },
+    onSendSuperEmoji: (SuperEmojiItem) -> Unit = {},
+    onSendSystemFace: (SystemFaceItem) -> Unit = {},
     onAvatarClick: (ChatMessage) -> Unit = {},
     onArkGroupNoticeClick: (ChatMessage) -> Unit = {},
     onAtSender: (ChatMessage) -> Unit = {},
     onAddToFavorite: (ChatMessage) -> Unit = {},
     onStartVoiceRecord: () -> Unit = {},
     initialMessagesLoaded: Boolean = true,
-    onSendSuperEmoji: (SuperEmojiItem) -> Unit = {},
-    onSendSystemFace: (SystemFaceItem) -> Unit = {},
     imeController: ChatImeController,
 ) {
     val context = LocalContext.current
@@ -294,14 +296,14 @@ internal fun ChatDetailMaterial(
     val hasJumpTargets = jumpTargets.isNotEmpty() && jumpCursor < jumpTargets.size
     // 回到最底部按钮：只要列表还能向前滚动（不在底部）就显示，回到底部自动隐藏。
     // 不再按手势方向即时收起：正常滑动/停顿/惯性回弹时按钮不会闪来闪去。
-        mutableStateOf(ChatScrollAnchor(count = -1, lastId = null, atBottom = true))
-    }
-    val latestMessagesForRefresh = androidx.compose.runtime.rememberUpdatedState(messages)
     val fabScope = rememberCoroutineScope()
 
     // 非 reverseLayout 列表的滚动锚定：进入时到底部、有新消息且原本在底部时跟随；
     // 加载更早消息时的视口保持由下面的 pendingOlderAnchor 逻辑处理。
     var scrollAnchor by remember(chat.id) {
+        mutableStateOf(ChatScrollAnchor(count = -1, lastId = null, atBottom = true))
+    }
+    val latestMessagesForRefresh = androidx.compose.runtime.rememberUpdatedState(messages)
     val latestLoadingForRefresh = androidx.compose.runtime.rememberUpdatedState(isLoadingOlder)
 
     // 下拉加载更早消息前记录的视口锚点（第一条可见消息 id + offset）；加载完成后
@@ -732,6 +734,8 @@ internal fun ChatDetailMaterial(
                                 item = item,
                                 onReplyQuoteClick = onReplyQuoteClick,
                                 plusOneMessageIds = plusOneMessageIds,
+                                showPlusOne = showPlusOne,
+                                onPlusOne = onPlusOne,
                                 onFileClick = onFileClick,
                                 downloadingFileMsgId = downloadingFileMsgId,
                                 fileDownloadProgress = fileDownloadProgress,
@@ -741,8 +745,6 @@ internal fun ChatDetailMaterial(
                                 onAvatarClick = onAvatarClick,
                                 isGroupChat = chat.isGroup,
                                 selfGroupName = selfGroupName,
-                                showPlusOne = showPlusOne,
-                                onPlusOne = onPlusOne,
                                 onArkGroupNoticeClick = onArkGroupNoticeClick,
                             )
                         }
@@ -778,6 +780,10 @@ internal fun ChatDetailMaterial(
                     composer = composer,
                     onSendCustomEmoji = onSendCustomEmoji,
                     onSendStickerPackEmoji = onSendStickerPackEmoji,
+                    // 与点击 Unicode emoji 一致：把表情作为 `[描述]` 文本插入输入框，
+                    // 发送时由 bridge 解析成 FaceElement（不直接发出）。
+                    onSendSuperEmoji = { item -> composer.appendEmoji("[超级:${item.desc}]") },
+                    onSendSystemFace = { item -> composer.appendEmoji("[${item.desc}]") },
                 )
             }
             // 附件面板：输入栏下方的就地展开面板，把消息列表向上顶。
@@ -795,10 +801,6 @@ internal fun ChatDetailMaterial(
                     },
                     onCameraAction = { isVideo ->
                         composer.closePanels()
-                    // 与点击 Unicode emoji 一致：把表情作为 `[描述]` 文本插入输入框，
-                    // 发送时由 bridge 解析成 FaceElement（不直接发出）。
-                    onSendSuperEmoji = { item -> composer.appendEmoji("[超级:${item.desc}]") },
-                    onSendSystemFace = { item -> composer.appendEmoji("[${item.desc}]") },
                         onCameraAction(isVideo)
                     },
                 )
@@ -873,6 +875,8 @@ internal fun ChatMessageItemMaterial(
     item: GroupedChatMessage,
     onReplyQuoteClick: (ChatMessage) -> Unit = {},
     plusOneMessageIds: Set<Long> = emptySet(),
+    showPlusOne: Boolean = false,
+    onPlusOne: (ChatMessage) -> Unit = {},
     onFileClick: (ChatMessage) -> Unit = {},
     downloadingFileMsgId: Long = 0L,
     fileDownloadProgress: Int = -1,
@@ -901,17 +905,15 @@ internal fun ChatMessageItemMaterial(
                 group = item.group,
                 onReplyQuoteClick = onReplyQuoteClick,
                 plusOne = message.chatRecordMsgId in plusOneMessageIds,
+                showPlusOne = showPlusOne,
+                onPlusOne = onPlusOne,
                 onFileClick = onFileClick,
-    showPlusOne: Boolean = false,
-    onPlusOne: (ChatMessage) -> Unit = {},
                 downloadingFileMsgId = downloadingFileMsgId,
                 fileDownloadProgress = fileDownloadProgress,
                 canRecallOthers = canRecallOthers,
                 canGroupAtSender = canGroupAtSender,
                 canAddToFavorite = canAddToFavorite,
                 onAvatarClick = onAvatarClick,
-                showPlusOne = showPlusOne,
-                onPlusOne = onPlusOne,
                 isGroupChat = isGroupChat,
                 selfGroupName = selfGroupName,
                 onArkGroupNoticeClick = onArkGroupNoticeClick,
@@ -926,6 +928,8 @@ private fun MessageRowMaterial(
     group: ChatBubbleGroup,
     onReplyQuoteClick: (ChatMessage) -> Unit = {},
     plusOne: Boolean = false,
+    showPlusOne: Boolean = false,
+    onPlusOne: (ChatMessage) -> Unit = {},
     onFileClick: (ChatMessage) -> Unit = {},
     downloadingFileMsgId: Long = 0L,
     fileDownloadProgress: Int = -1,
@@ -957,8 +961,6 @@ private fun MessageRowMaterial(
             ChatAvatarSlotMaterial(
                 message = message,
                 group = group,
-    showPlusOne: Boolean = false,
-    onPlusOne: (ChatMessage) -> Unit = {},
                 trailing = false,
                 onAvatarClick = onAvatarClick,
             )
@@ -1017,11 +1019,6 @@ private fun MessageRowMaterial(
                         fileDownloadProgress = fileDownloadProgress,
                         onArkGroupNoticeClick = onArkGroupNoticeClick,
                     )
-                }
-            }
-            if (group.isGroupEnd) {
-                // 不再显示 +1 成功后的「+1」badge（按需求移除）。
-                MessageMetaMaterial(message = message)
                 } else {
                     BubbleActionMenuHost(
                         message = message,
@@ -1052,6 +1049,13 @@ private fun MessageRowMaterial(
                         Spacer(Modifier.width(8.dp))
                         PlusOneCircleMaterial(plusOne = plusOne, onClick = { onPlusOne(message) })
                     }
+                }
+            } else {
+                Box(modifier = Modifier.widthIn(max = 284.dp)) { bubbleContent() }
+            }
+            if (group.isGroupEnd) {
+                // 不再显示 +1 成功后的「+1」badge（按需求移除）。
+                MessageMetaMaterial(message = message)
             }
         }
         // 多选：对方的消息 checkbox 放整行最右侧，头像+气泡仍贴左。
@@ -1074,15 +1078,6 @@ private fun MessageRowMaterial(
     }
 }
 
-@Composable
-private fun MaterialSelectionCheckbox(
-    checked: Boolean,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    androidx.compose.material3.Checkbox(
-        checked = checked,
-        onCheckedChange = { onToggle() },
 /** 气泡右侧的「+1」圆钮（双击加一开关开启时显示）。 */
 @Composable
 private fun PlusOneCircleMaterial(plusOne: Boolean, onClick: () -> Unit) {
@@ -1108,6 +1103,15 @@ private fun PlusOneCircleMaterial(plusOne: Boolean, onClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun MaterialSelectionCheckbox(
+    checked: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    androidx.compose.material3.Checkbox(
+        checked = checked,
+        onCheckedChange = { onToggle() },
         modifier = modifier,
     )
 }
@@ -1233,6 +1237,9 @@ private fun ChatBubbleMaterial(
             downloadProgress = fileDownloadProgress,
         )
         ChatMessageType.VOICE -> VoiceBubbleMaterial(message, container, content, position)
+        ChatMessageType.CALL -> CallBubbleMaterial(message, container, content, position)
+        ChatMessageType.SUPER_EMOJI -> SuperEmojiBubbleMaterial(message, container, content, position)
+        ChatMessageType.SYS_FACE -> SystemFaceBubbleMaterial(message, container, content, position)
         ChatMessageType.RED_PACKET -> RedPacketBubbleMaterial(message, position)
         ChatMessageType.LINK -> LinkBubbleMaterial(message, container, content, position)
         ChatMessageType.CHAT_RECORD -> ChatRecordBubbleMaterial(message, container, content, position)
@@ -1277,82 +1284,6 @@ private fun TextBubbleMaterial(
     }
 }
 
-/**
- * 多元素消息气泡：外层沿用普通气泡形状/颜色，内部按 [ChatMessage.parts] 顺序竖排。
- * 文本走 linkifyContent（链接可点），图片宽 ≤200dp / 表情图约 110dp（无气泡底），无路径时显示占位。
- */
-@Composable
-private fun MultiPartBubbleMaterial(
-    message: ChatMessage,
-    container: Color,
-    content: Color,
-    position: ChatBubblePosition,
-) {
-    val navigator = LocalNavigator.current
-    val colorScheme = MaterialTheme.colorScheme
-    val imageLabel = stringResource(R.string.chat_image_message)
-    val gradient = remember(colorScheme.secondaryContainer, colorScheme.tertiaryContainer) {
-        Brush.linearGradient(listOf(colorScheme.secondaryContainer, colorScheme.tertiaryContainer))
-    }
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val uriHandler = remember(context) { openLinkHandler(context) }
-    Surface(
-        shape = chatBubbleShape(position, message.isMe),
-        color = container,
-        contentColor = content,
-    ) {
-        androidx.compose.runtime.CompositionLocalProvider(
-            androidx.compose.ui.platform.LocalUriHandler provides uriHandler,
-        ) {
-            Column(
-                modifier = Modifier.padding(8.dp),
-        ChatMessageType.CALL -> CallBubbleMaterial(message, container, content, position)
-        ChatMessageType.SUPER_EMOJI -> SuperEmojiBubbleMaterial(message, container, content, position)
-        ChatMessageType.SYS_FACE -> SystemFaceBubbleMaterial(message, container, content, position)
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                message.parts.forEach { part ->
-                    when (part.kind) {
-                        ChatPartKind.TEXT -> Text(
-                            text = linkifyContent(
-                                part.text,
-                                if (message.isMe) content else colorScheme.primary,
-                            ),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = content,
-                        )
-                        ChatPartKind.IMAGE -> {
-                            val emojiPart = part.emojiImage
-                            val ratio = remember(
-                                part.imagePath,
-                                part.imageWidth,
-                                part.imageHeight,
-                            ) {
-                                val raw = if (part.imageWidth > 0 && part.imageHeight > 0) {
-                                    part.imageWidth.toFloat() / part.imageHeight
-                                } else {
-                                    1.4f
-                                }
-                                if (emojiPart) raw.coerceIn(0.5f, 2f) else raw.coerceIn(0.6f, 1.8f)
-                            }
-                            val imageModifier = if (emojiPart) {
-                                Modifier.width(110.dp).aspectRatio(ratio)
-                            } else {
-                                Modifier.widthIn(max = 200.dp).aspectRatio(ratio)
-                            }
-                            Box(
-                                modifier = imageModifier
-                                    .clip(RoundedCornerShape(if (emojiPart) 6.dp else 10.dp))
-                                    .then(
-                                        if (emojiPart) {
-                                            Modifier
-                                        } else {
-                                            Modifier.background(gradient)
-                                        },
-                                    )
-                                    .clickable {
-                                        part.imagePath?.let {
-                                        navigator.push(
 /** 「文字 + QQ 小黄脸」行内气泡：表情用 InlineTextContent 与文字同样的行高显示。 */
 @Composable
 private fun InlinePartsBubbleMaterial(
@@ -1442,6 +1373,87 @@ private fun InlinePartsBubbleMaterial(
     }
 }
 
+/**
+ * 多元素消息气泡：外层沿用普通气泡形状/颜色，内部按 [ChatMessage.parts] 顺序竖排。
+ * 文本走 linkifyContent（链接可点），图片宽 ≤200dp / 表情图约 110dp（无气泡底），无路径时显示占位。
+ */
+@Composable
+private fun MultiPartBubbleMaterial(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+) {
+    val navigator = LocalNavigator.current
+    val colorScheme = MaterialTheme.colorScheme
+    val imageLabel = stringResource(R.string.chat_image_message)
+    val gradient = remember(colorScheme.secondaryContainer, colorScheme.tertiaryContainer) {
+        Brush.linearGradient(listOf(colorScheme.secondaryContainer, colorScheme.tertiaryContainer))
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val uriHandler = remember(context) { openLinkHandler(context) }
+    // 只有「文字 + 小黄脸」时走行内渲染：表情和文字同高，不单独占一行/放大。
+    if (message.parts.none {
+            it.kind == ChatPartKind.IMAGE && !it.isSystemFace && !it.isSuperEmoji
+        }
+    ) {
+        InlinePartsBubbleMaterial(message, container, content, position, uriHandler)
+        return
+    }
+    Surface(
+        shape = chatBubbleShape(position, message.isMe),
+        color = container,
+        contentColor = content,
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalUriHandler provides uriHandler,
+        ) {
+            Column(
+                modifier = Modifier.padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                message.parts.forEach { part ->
+                    when (part.kind) {
+                        ChatPartKind.TEXT -> Text(
+                            text = linkifyContent(
+                                part.text,
+                                if (message.isMe) content else colorScheme.primary,
+                            ),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = content,
+                        )
+                        ChatPartKind.IMAGE -> {
+                            val emojiPart = part.emojiImage
+                            val ratio = remember(
+                                part.imagePath,
+                                part.imageWidth,
+                                part.imageHeight,
+                            ) {
+                                val raw = if (part.imageWidth > 0 && part.imageHeight > 0) {
+                                    part.imageWidth.toFloat() / part.imageHeight
+                                } else {
+                                    1.4f
+                                }
+                                if (emojiPart) raw.coerceIn(0.5f, 2f) else raw.coerceIn(0.6f, 1.8f)
+                            }
+                            val imageModifier = if (emojiPart) {
+                                Modifier.width(110.dp).aspectRatio(ratio)
+                            } else {
+                                Modifier.widthIn(max = 200.dp).aspectRatio(ratio)
+                            }
+                            Box(
+                                modifier = imageModifier
+                                    .clip(RoundedCornerShape(if (emojiPart) 6.dp else 10.dp))
+                                    .then(
+                                        if (emojiPart) {
+                                            Modifier
+                                        } else {
+                                            Modifier.background(gradient)
+                                        },
+                                    )
+                                    .clickable {
+                                        part.imagePath?.let {
+                                        navigator.push(
                                             Route.ChatImage(
                                                 imagePath = it,
                                                 chatId = message.chatId,
@@ -1712,87 +1724,6 @@ private fun FileBubbleMaterial(
     }
 }
 
-/** 语音条：播放圆钮 + 可拖动进度条 + 时长；点击播放/暂停（全局同一时间只播一条）。 */
-@Composable
-private fun VoiceBubbleMaterial(
-    message: ChatMessage,
-    container: Color,
-    content: Color,
-    position: ChatBubblePosition,
-) {
-    val context = LocalContext.current
-    val playing = VoicePlaybackController.isPlaying(message.id)
-    val unavailableText = stringResource(R.string.chat_voice_unavailable)
-    val playFailedText = stringResource(R.string.chat_voice_play_failed)
-    // 听筒/扬声器路由：状态来自宿主播放器，点击只切换路由、不触发气泡播放/暂停。
-    val voiceSource = AppDataSources.voicePlaybackSource
-    var speakerEnabled by remember { mutableStateOf(voiceSource?.isSpeakerEnabled() == true) }
-    // 常驻进度条：未播放 0%，播放中实时进度，暂停后停在暂停位置。
-    val progress = VoicePlaybackController.progressFor(message.id)
-    Surface(
-        onClick = {
-            // 宿主播放是异步的：参数/文件问题同步返回 false；播放失败走回调 Toast。
-            if (!VoicePlaybackController.toggle(message) {
-                    Toast.makeText(context, playFailedText, Toast.LENGTH_SHORT).show()
-                }
-            ) {
-                Toast.makeText(context, unavailableText, Toast.LENGTH_SHORT).show()
-            }
-        },
-        modifier = Modifier.widthIn(min = 160.dp),
-        shape = chatBubbleShape(position, message.isMe),
-        color = container,
-        contentColor = content,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (voiceSource != null) {
-                Icon(
-                    imageVector = if (speakerEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.Filled.Call,
-                    contentDescription = stringResource(
-                        if (speakerEnabled) R.string.chat_voice_speaker else R.string.chat_voice_earpiece,
-                    ),
-                    tint = content,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .clickable {
-                            val next = !speakerEnabled
-                            val ok = runCatching { voiceSource.setSpeakerEnabled(next) }
-                                .getOrDefault(false)
-                            if (ok) speakerEnabled = next
-                        },
-                )
-                Spacer(Modifier.width(6.dp))
-            }
-            Icon(
-                imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = stringResource(R.string.chat_voice),
-                tint = content,
-                modifier = Modifier.size(24.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            // 中间常驻进度条：可拖动 seek（命中高度 24dp，视觉 10dp 大波浪）。
-            DraggableWavyProgressBar(
-                progress = progress,
-                onSeekFinished = { fraction -> VoicePlaybackController.seekTo(message, fraction) },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(24.dp),
-                color = content,
-                trackColor = content.copy(alpha = 0.24f),
-                amplitude = 4.dp,
-                barHeight = 10.dp,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = stringResource(R.string.chat_voice_message, message.voiceSeconds),
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
-            )
-        }
 /** QQ 系统小黄脸：与「文字+表情」混排完全一致的行内渲染（单独一个表情也同高）。 */
 @Composable
 private fun SystemFaceBubbleMaterial(
@@ -1886,6 +1817,87 @@ private fun CallBubbleMaterial(
     }
 }
 
+/** 语音条：播放圆钮 + 可拖动进度条 + 时长；点击播放/暂停（全局同一时间只播一条）。 */
+@Composable
+private fun VoiceBubbleMaterial(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+) {
+    val context = LocalContext.current
+    val playing = VoicePlaybackController.isPlaying(message.id)
+    val unavailableText = stringResource(R.string.chat_voice_unavailable)
+    val playFailedText = stringResource(R.string.chat_voice_play_failed)
+    // 听筒/扬声器路由：状态来自宿主播放器，点击只切换路由、不触发气泡播放/暂停。
+    val voiceSource = AppDataSources.voicePlaybackSource
+    var speakerEnabled by remember { mutableStateOf(voiceSource?.isSpeakerEnabled() == true) }
+    // 常驻进度条：未播放 0%，播放中实时进度，暂停后停在暂停位置。
+    val progress = VoicePlaybackController.progressFor(message.id)
+    Surface(
+        onClick = {
+            // 宿主播放是异步的：参数/文件问题同步返回 false；播放失败走回调 Toast。
+            if (!VoicePlaybackController.toggle(message) {
+                    Toast.makeText(context, playFailedText, Toast.LENGTH_SHORT).show()
+                }
+            ) {
+                Toast.makeText(context, unavailableText, Toast.LENGTH_SHORT).show()
+            }
+        },
+        modifier = Modifier.widthIn(min = 160.dp),
+        shape = chatBubbleShape(position, message.isMe),
+        color = container,
+        contentColor = content,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (voiceSource != null) {
+                Icon(
+                    imageVector = if (speakerEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.Filled.Call,
+                    contentDescription = stringResource(
+                        if (speakerEnabled) R.string.chat_voice_speaker else R.string.chat_voice_earpiece,
+                    ),
+                    tint = content,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .clickable {
+                            val next = !speakerEnabled
+                            val ok = runCatching { voiceSource.setSpeakerEnabled(next) }
+                                .getOrDefault(false)
+                            if (ok) speakerEnabled = next
+                        },
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Icon(
+                imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = stringResource(R.string.chat_voice),
+                tint = content,
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            // 中间常驻进度条：可拖动 seek（命中高度 24dp，视觉 10dp 大波浪）。
+            DraggableWavyProgressBar(
+                progress = progress,
+                onSeekFinished = { fraction -> VoicePlaybackController.seekTo(message, fraction) },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(24.dp),
+                color = content,
+                trackColor = content.copy(alpha = 0.24f),
+                amplitude = 4.dp,
+                barHeight = 10.dp,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = stringResource(R.string.chat_voice_message, message.voiceSeconds),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -2122,6 +2134,7 @@ private fun ChatInputBarMaterial(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        // 左侧：语音按钮（与 QQ/TIM 一致：语音在左、加号在右）。
         IconButton(
             onClick = onStartVoiceRecord,
             modifier = Modifier.size(40.dp),
@@ -2130,7 +2143,7 @@ private fun ChatInputBarMaterial(
                 imageVector = Icons.Filled.Mic,
                 contentDescription = stringResource(R.string.chat_voice),
                 tint = colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(26.dp),
+                modifier = Modifier.size(22.dp),
             )
         }
         Surface(
@@ -2187,7 +2200,6 @@ private fun ChatInputBarMaterial(
                         if (focusState.isFocused) {
                             onInputFocused()
                             imeController.onInputFocusGained()
-        // 左侧：语音按钮（与 QQ/TIM 一致：语音在左、加号在右）。
                         } else {
                             imeController.onInputFocusLost()
                         }
@@ -2236,7 +2248,7 @@ private fun ChatInputBarMaterial(
                     imageVector = Icons.Filled.Close,
                     contentDescription = stringResource(R.string.chat_input_close),
                     tint = colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier.size(24.dp),
                 )
             }
             composer.text.isEmpty() -> IconButton(
@@ -2753,6 +2765,8 @@ private fun ChatFloatingActionsMaterial(
     modifier: Modifier = Modifier,
 ) {
     val margin = 16.dp
+    val fabSize = 40.dp
+    val gap = 16.dp
     val density = LocalDensity.current
     val marginPx = with(density) { margin.roundToPx() }
     val navBottomDp = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -2772,11 +2786,13 @@ private fun ChatFloatingActionsMaterial(
                 val bottomInset = maxOf(keyboardBottomInset.value, navBottomDp)
                 IntOffset(0, -(bottomOffsetPx + bottomInset.roundToPx() + marginPx))
             }
-        }
+            // 固定预留两个 FAB 的高度：显隐只改变透明度/位置，不触发整列布局跳动。
+            .size(width = fabSize, height = fabSize * 2 + gap),
+        contentAlignment = Alignment.BottomEnd,
+    ) {
         AnimatedVisibility(
-    val fabSize = 40.dp
-    val gap = 16.dp
             visible = bottomButtonVisible,
+            modifier = Modifier.align(Alignment.BottomEnd),
             enter = fadeIn() + scaleIn(initialScale = 0.85f),
             exit = fadeOut() + scaleOut(targetScale = 0.85f),
         ) {
@@ -2786,13 +2802,7 @@ private fun ChatFloatingActionsMaterial(
                     contentDescription = stringResource(R.string.chat_back_to_bottom),
                 )
             }
-            // 固定预留两个 FAB 的高度：显隐只改变透明度/位置，不触发整列布局跳动。
-            modifier = Modifier.align(Alignment.BottomEnd),
-            .size(width = fabSize, height = fabSize * 2 + gap),
-        contentAlignment = Alignment.BottomEnd,
-    ) {
-    }
-}
+        }
         AnimatedVisibility(
             visible = jumpVisible,
             modifier = Modifier
@@ -2808,3 +2818,5 @@ private fun ChatFloatingActionsMaterial(
                 )
             }
         }
+    }
+}

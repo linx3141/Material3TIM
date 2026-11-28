@@ -118,9 +118,8 @@ fun ContactsPagerMiuix(
     val navigator = LocalNavigator.current
 
     val scrollBehavior = MiuixScrollBehavior()
-    val dynamicTopPadding by remember {
-        derivedStateOf { 12.dp * (1f - scrollBehavior.state.collapsedFraction) }
-    }
+    // 首页顶栏固定收起：搜索栏顶部 padding 固定为收起态值，不再随滑动变化。
+    val dynamicTopPadding = 12.dp
 
     // Phase 2b：页面级 Glass 采样 backdrop；关闭模糊/无 runtime shader 时 null → 纯色回退。
     val backdrop = rememberPageBackdrop(enableBlur)
@@ -135,6 +134,7 @@ fun ContactsPagerMiuix(
             HyperTopAppBar(
                 title = stringResource(R.string.contacts),
                 scrollBehavior = scrollBehavior,
+                expandable = false,
                 backdrop = backdrop,
                 actions = {
                     // 圆形 Glass 按钮（玻璃模式）/ 普通 IconButton（纯色回退）。

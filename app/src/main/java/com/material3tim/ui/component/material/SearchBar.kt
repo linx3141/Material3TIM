@@ -34,6 +34,7 @@ import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SearchBarValue
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.rememberContainedSearchBarState
 import androidx.compose.runtime.Composable
@@ -72,6 +73,8 @@ fun SearchAppBar(
     searchContent: @Composable BoxScope.(bottomPadding: Dp, closeSearch: () -> Unit) -> Unit = { _, _ -> },
     // 非空时：点击胶囊不展开内联搜索，而是交给调用方（如跳转全局搜索页）。
     onSearchClick: (() -> Unit)? = null,
+    /** true：顶栏固定为收起态（首页三页使用），不随滑动展开大标题。 */
+    alwaysCollapsedTopBar: Boolean = false,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -187,14 +190,29 @@ fun SearchAppBar(
         Column(
             modifier = Modifier.fillMaxWidth()
         ) {
-            LargeFlexibleTopAppBar(
-                title = title,
-                colors = expressiveTopAppBarColors(),
-                navigationIcon = { if (navigationIcon != null) navigationIcon() },
-                actions = { if (actions != null) actions() },
-                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
-                scrollBehavior = scrollBehavior
-            )
+            if (alwaysCollapsedTopBar) {
+                TopAppBar(
+                    // M3E 官方（如 AOSP 设置）首页标题左边距为 24dp；TopAppBar 默认约 16dp，这里补 8dp。
+                    title = {
+                        Box(modifier = Modifier.padding(start = 8.dp)) {
+                            title()
+                        }
+                    },
+                    colors = expressiveTopAppBarColors(),
+                    navigationIcon = { if (navigationIcon != null) navigationIcon() },
+                    actions = { if (actions != null) actions() },
+                    windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                )
+            } else {
+                LargeFlexibleTopAppBar(
+                    title = title,
+                    colors = expressiveTopAppBarColors(),
+                    navigationIcon = { if (navigationIcon != null) navigationIcon() },
+                    actions = { if (actions != null) actions() },
+                    windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                    scrollBehavior = scrollBehavior
+                )
+            }
 
             Box(modifier = Modifier.fillMaxWidth()) {
                 SearchBar(

@@ -126,16 +126,6 @@ interface GroupFileSource {
 }
 
 interface MessageSource {
-    fun loadMessages(chatId: String): List<ChatMessage>?
-
-    /**
-     * 图片查看器用：取一条图片消息的**原图**本地路径（阻塞，IO 线程调用）。
-     * 优先已缓存原图 → 内核原图下载 → originImageUrl HTTP 兜底；失败 null。
-     */
-    fun loadChatImageOriginal(chatId: String, msgId: Long, elementId: Long): String? = null
-
-    /**
-     * 用系统录音机录音并作为语音消息发送到 [chatId]：拉起 MediaStore.RECORD_SOUND，
     /**
      * 发送 QQ 超级表情（FaceElement 带 stickerType/packId/stickerId）；失败返回 false。
      * 阻塞，需在 IO 线程调用。
@@ -152,6 +142,16 @@ interface MessageSource {
     /** 发送 QQ 系统小黄脸（普通 FaceElement）。阻塞，需在 IO 线程调用。 */
     fun sendSystemFace(chatId: String, serverId: Int, desc: String): Boolean = false
 
+    fun loadMessages(chatId: String): List<ChatMessage>?
+
+    /**
+     * 图片查看器用：取一条图片消息的**原图**本地路径（阻塞，IO 线程调用）。
+     * 优先已缓存原图 → 内核原图下载 → originImageUrl HTTP 兜底；失败 null。
+     */
+    fun loadChatImageOriginal(chatId: String, msgId: Long, elementId: Long): String? = null
+
+    /**
+     * 用系统录音机录音并作为语音消息发送到 [chatId]：拉起 MediaStore.RECORD_SOUND，
      * 结果经 TimUiHook.onActivityResult → 桥接复制/转码 → TIM 语音发送链路。
      * 返回 false 表示没有前台 Activity / 已有记录进行中（独立 App 默认 false）。
      */
@@ -356,6 +356,12 @@ interface SearchSource {
 
 /** 收藏表情数据源：用户「添加到表情」收集的单张表情图片。 */
 interface EmojiSource {
+    /** 阻塞加载 QQ 超级表情列表；失败/宿主未就绪返回 null。必须在后台线程调用。 */
+    fun loadSuperEmojis(): List<com.material3tim.data.model.SuperEmojiItem>? = null
+
+    /** 阻塞加载 QQ 系统小黄脸列表（静态内置表情）；失败返回 null。必须在后台线程调用。 */
+    fun loadSystemFaces(): List<com.material3tim.data.model.SystemFaceItem>? = null
+
     /** 阻塞加载收藏表情；失败返回 null。必须在后台线程调用。 */
     fun loadFavoriteEmojis(): List<CustomEmoji>?
 
@@ -366,12 +372,6 @@ interface EmojiSource {
     fun refreshFavoriteEmojis(): List<CustomEmoji>? = loadFavoriteEmojis()
 
     /**
-    /** 阻塞加载 QQ 超级表情列表；失败/宿主未就绪返回 null。必须在后台线程调用。 */
-    fun loadSuperEmojis(): List<com.material3tim.data.model.SuperEmojiItem>? = null
-
-    /** 阻塞加载 QQ 系统小黄脸列表（静态内置表情）；失败返回 null。必须在后台线程调用。 */
-    fun loadSystemFaces(): List<com.material3tim.data.model.SystemFaceItem>? = null
-
      * 长按图片/表情消息「添加到表情」：按 elementId 找 PicElement/MarketFaceElement，
      * 必要时先下载原图，再走 TIM 收藏 API。成功（已触发/已添加）返回 true。
      */
@@ -520,16 +520,6 @@ interface VoicePlaybackSource {
     fun resumeVoice(): Boolean = false
 }
 
-/** 可插拔的数据源注册表（第 3 步：真实 TIM 数据接入）。 */
-object AppDataSources {
-
-    @Volatile
-    var chatSource: ChatSource? = null
-
-    @Volatile
-    var messageSource: MessageSource? = null
-
-    @Volatile
 /**
  * 原生 TIM 界面切换（仅宿主模式）。
  * 我们的 Compose 界面是盖在 TIM decorView 上的覆盖层；切到原生时隐藏覆盖层。
@@ -542,6 +532,16 @@ interface NativeUiSource {
     fun isNativeUiMode(): Boolean = false
 }
 
+/** 可插拔的数据源注册表（第 3 步：真实 TIM 数据接入）。 */
+object AppDataSources {
+
+    @Volatile
+    var chatSource: ChatSource? = null
+
+    @Volatile
+    var messageSource: MessageSource? = null
+
+    @Volatile
     var contactSource: ContactSource? = null
 
     @Volatile
@@ -577,6 +577,9 @@ interface NativeUiSource {
     @Volatile
     var friendManageSource: FriendManageSource? = null
 
+    @Volatile
+    var nativeUiSource: NativeUiSource? = null
+
     /** 是否运行在宿主（TIM）进程、使用真实数据。 */
     val hasLiveDataSource: Boolean
         get() = chatSource != null
@@ -586,9 +589,6 @@ interface NativeUiSource {
 
     val hasLiveContacts: Boolean
         get() = contactSource != null
-
-    @Volatile
-    var nativeUiSource: NativeUiSource? = null
 
     val hasLiveEmojis: Boolean
         get() = emojiSource != null

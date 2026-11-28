@@ -1,6 +1,8 @@
 package com.material3tim.ui.screen.profile
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,24 +24,23 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import com.material3tim.R
 import com.material3tim.data.model.UserProfile
 import com.material3tim.data.repository.ChatRepository
+import com.material3tim.data.source.AppDataSources
 import com.material3tim.ui.component.material.ExpressiveScaffold
 import com.material3tim.ui.component.material.SegmentedColumn
 import com.material3tim.ui.component.material.SegmentedListItem
@@ -61,17 +63,22 @@ fun ProfileMaterial(
     bottomInnerPadding: Dp,
 ) {
     val profile = ChatRepository.profile
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+    val context = LocalContext.current
 
     ExpressiveScaffold(
         topBar = {
-            LargeFlexibleTopAppBar(
-                title = { Text(stringResource(R.string.profile)) },
+            // 首页顶栏固定收起态：始终使用小标题 TopAppBar，不随滑动展开大标题。
+            TopAppBar(
+                // M3E 官方首页标题左边距 24dp：TopAppBar 默认约 16dp，这里补 8dp。
+                title = {
+                    Box(modifier = Modifier.padding(start = 8.dp)) {
+                        Text(stringResource(R.string.profile))
+                    }
+                },
                 colors = expressiveTopAppBarColors(),
                 windowInsets = WindowInsets.safeDrawing.only(
                     WindowInsetsSides.Top + WindowInsetsSides.Horizontal
                 ),
-                scrollBehavior = scrollBehavior,
             )
         },
         contentWindowInsets = WindowInsets.safeDrawing.only(
@@ -82,12 +89,11 @@ fun ProfileMaterial(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(13.dp),
         ) {
-            Spacer(Modifier.height(4.dp))
+            // 与消息/联系人页一致：内容紧跟顶栏（此前多 4dp 间距，导致「我的」首卡离标题稍远）。
             ProfileHeaderMaterial(
                 profile = profile,
                 onEditClick = { navigator.push(Route.EditProfile) },
@@ -150,13 +156,6 @@ fun ProfileMaterial(
                             onClick = { navigator.push(Route.About) },
                         )
                     },
-                )
-            )
-            Spacer(
-                Modifier.height(
-                    bottomInnerPadding +
-                            WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +
-                            8.dp
                     {
                         // 隐藏我们的覆盖层，露出 TIM 原生界面；原生界面底部有常驻「返回 Material3Tim」按钮。
                         ProfileEntryMaterial(
@@ -166,6 +165,13 @@ fun ProfileMaterial(
                             onClick = { enterNativeTimUi(context) },
                         )
                     },
+                )
+            )
+            Spacer(
+                Modifier.height(
+                    bottomInnerPadding +
+                            WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +
+                            8.dp
                 )
             )
         }

@@ -20,11 +20,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.shadow
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.foundation.layout.offset
 import java.io.File
 
 import com.material3tim.ui.component.AnimatedOrStaticImage
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import com.material3tim.ui.component.rememberLocalImage
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Image
@@ -82,19 +82,19 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.foundation.text.InlineTextContent
-import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.runtime.Composable
-import androidx.compose.material.icons.filled.Videocam
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
@@ -113,6 +113,13 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.material3tim.ui.theme.LocalShowTopAppBar
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.layout.Layout
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -133,6 +140,9 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -143,17 +153,19 @@ import com.material3tim.ui.navigation3.LocalNavigator
 import com.material3tim.ui.navigation3.Route
 import com.material3tim.data.model.ChatItem
 import com.material3tim.data.model.ChatMessage
+import com.material3tim.data.model.ChatPart
 import com.material3tim.data.repository.LiveProfile
-import androidx.compose.ui.text.Placeholder
-import androidx.compose.ui.text.PlaceholderVerticalAlign
-import androidx.compose.ui.text.buildAnnotatedString
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.data.model.ChatMember
 import com.material3tim.data.model.CustomEmoji
+import com.material3tim.data.model.SuperEmojiItem
+import com.material3tim.data.model.SystemFaceItem
 import com.material3tim.data.source.AtTarget
 import com.material3tim.data.model.ChatMessageType
 import com.material3tim.data.model.ChatPartKind
 import com.material3tim.ui.component.ChatAvatar
+import com.material3tim.ui.component.SuperEmojiAnimation
+import com.material3tim.ui.component.DataLineAvatar
 import com.material3tim.ui.component.ime.ChatImeController
 import com.material3tim.ui.component.ime.rememberKeyboardHeightDp
 import com.material3tim.ui.component.MiuixProgressBar
@@ -162,8 +174,6 @@ import com.material3tim.ui.component.VoicePlaybackController
 import com.material3tim.ui.theme.LocalEnableBlur
 import com.material3tim.ui.component.miuix.glass.LocalPageBackdrop
 import com.material3tim.ui.component.miuix.glass.GlassMenuHost
-import com.material3tim.data.model.SuperEmojiItem
-import com.material3tim.data.model.SystemFaceItem
 import com.material3tim.ui.component.miuix.glass.GlassMenuState
 import com.material3tim.ui.component.miuix.glass.LocalGlassMenu
 import com.material3tim.ui.component.miuix.glass.rememberPageBackdrop
@@ -177,9 +187,9 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.PullToRefresh
-import com.material3tim.ui.component.SuperEmojiAnimation
-import com.material3tim.ui.component.DataLineAvatar
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
+import top.yukonga.miuix.kmp.anim.folmeSpring
+import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.rememberPullToRefreshState
 import top.yukonga.miuix.kmp.blur.layerBackdrop
@@ -188,8 +198,6 @@ import top.yukonga.miuix.kmp.icon.extended.AddCircle
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Download
-import top.yukonga.miuix.kmp.anim.folmeSpring
-import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.icon.extended.File
 import top.yukonga.miuix.kmp.icon.extended.Image
 import top.yukonga.miuix.kmp.icon.extended.Link
@@ -200,6 +208,7 @@ import top.yukonga.miuix.kmp.icon.extended.Pause
 import top.yukonga.miuix.kmp.icon.extended.Play
 import top.yukonga.miuix.kmp.icon.extended.Promotions
 import top.yukonga.miuix.kmp.icon.extended.Send
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
@@ -216,6 +225,7 @@ import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 internal fun ChatDetailMiuix(
     chat: ChatItem,
     messages: List<ChatMessage>,
+    showTopBarAvatar: Boolean = true,
     composer: ChatComposerState,
     onBack: () -> Unit,
     onOpenInfo: () -> Unit,
@@ -225,7 +235,6 @@ internal fun ChatDetailMiuix(
     onClearReply: () -> Unit = {},
     onDeleteMessage: (ChatMessage) -> Unit = {},
     onRecallMessage: (ChatMessage) -> Unit = {},
-    showTopBarAvatar: Boolean = true,
     onFileClick: (ChatMessage) -> Unit = {},
     downloadingFileMsgId: Long = 0L,
     fileDownloadProgress: Int = -1,
@@ -247,6 +256,7 @@ internal fun ChatDetailMiuix(
     onForwardMessage: (ChatMessage) -> Unit = {},
     onPlusOne: (ChatMessage) -> Unit = {},
     plusOneMessageIds: Set<Long> = emptySet(),
+    showPlusOne: Boolean = false,
     jumpTarget: ChatMessage? = null,
     onJumpConsumed: () -> Unit = {},
     onLoadOlder: () -> Unit = {},
@@ -256,6 +266,8 @@ internal fun ChatDetailMiuix(
     onCameraAction: (Boolean) -> Unit = {},
     onSendCustomEmoji: (CustomEmoji) -> Unit = {},
     onSendStickerPackEmoji: (packId: String, eId: String) -> Unit = { _, _ -> },
+    onSendSuperEmoji: (SuperEmojiItem) -> Unit = {},
+    onSendSystemFace: (SystemFaceItem) -> Unit = {},
     onAvatarClick: (ChatMessage) -> Unit = {},
     onArkGroupNoticeClick: (ChatMessage) -> Unit = {},
     onAtSender: (ChatMessage) -> Unit = {},
@@ -263,7 +275,6 @@ internal fun ChatDetailMiuix(
     onStartVoiceRecord: () -> Unit = {},
     initialMessagesLoaded: Boolean = true,
     imeController: ChatImeController,
-    showPlusOne: Boolean = false,
 ) {
     val context = LocalContext.current
     val enableBlur = LocalEnableBlur.current
@@ -274,8 +285,6 @@ internal fun ChatDetailMiuix(
     // 聊天页顶栏始终是钉住的小标题（不展开大标题），scrollBehavior 只用于玻璃栏的滚动态样式。
     val scrollBehavior = MiuixScrollBehavior()
     val listState = rememberLazyListState()
-    onSendSuperEmoji: (SuperEmojiItem) -> Unit = {},
-    onSendSystemFace: (SystemFaceItem) -> Unit = {},
     val groupedMessages = remember(messages) { groupChatMessages(messages) }
     // 群聊里自己消息上方也要显示昵称：优先群成员列表里的「我」的群名片。
     val selfGroupName = remember(atMembers) {
@@ -312,6 +321,11 @@ internal fun ChatDetailMiuix(
     val jumpTargets = remember(unreadAtMeIndices, eventJumpIndices) {
         (unreadAtMeIndices + eventJumpIndices).distinct().sortedDescending()
     }
+    // jumpCursor：下一次跳转距列表末尾的偏移（0 = 最新一条）；每次跳转 +1。
+    var jumpCursor by remember(chat.id) { mutableIntStateOf(0) }
+    val hasJumpTargets = jumpTargets.isNotEmpty() && jumpCursor < jumpTargets.size
+    // 回到最底部按钮：只要列表还能向前滚动（不在底部）就显示，回到底部自动隐藏。
+    // 不再按手势方向即时收起：正常滑动/停顿/惯性回弹时按钮不会闪来闪去。
     val fabScope = rememberCoroutineScope()
 
     // 非 reverseLayout 列表的滚动锚定：进入时到底部、有新消息且原本在底部时跟随；
@@ -328,11 +342,6 @@ internal fun ChatDetailMiuix(
     var pendingOlderOffset by remember(chat.id) { mutableStateOf(0) }
     var pendingOlderCount by remember(chat.id) { mutableStateOf(0) }
     // 需要延迟兜底校正的目标（index + offset）
-    // jumpCursor：下一次跳转距列表末尾的偏移（0 = 最新一条）；每次跳转 +1。
-    var jumpCursor by remember(chat.id) { mutableIntStateOf(0) }
-    val hasJumpTargets = jumpTargets.isNotEmpty() && jumpCursor < jumpTargets.size
-    // 回到最底部按钮：只要列表还能向前滚动（不在底部）就显示，回到底部自动隐藏。
-    // 不再按手势方向即时收起：正常滑动/停顿/惯性回弹时按钮不会闪来闪去。
     var olderCorrectionTarget by remember(chat.id) { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // 在组合阶段就算出恢复目标，并用 SideEffect 在「布局之前」请求滚动（requestScrollToItem），
@@ -649,9 +658,9 @@ internal fun ChatDetailMiuix(
                         isContentScrolled = listState.canScrollBackward,
                         navigationIcon = {
                             HyperTopBarIconButton(
-                                onClick = comingSoon,
-                                contentDescription = stringResource(R.string.contact_audio_call),
-                                icon = MiuixIcons.Phone,
+                                onClick = onBack,
+                                contentDescription = stringResource(R.string.chat_detail_back),
+                                icon = MiuixIcons.Back,
                             )
                         },
                         actions = {
@@ -674,8 +683,8 @@ internal fun ChatDetailMiuix(
                             chat = chat,
                             subtitle = chatSubtitle(chat).orEmpty(),
                         )
-                    },
-                )
+                    }
+                }
             }
         },
         popupHost = { },
@@ -781,6 +790,8 @@ internal fun ChatDetailMiuix(
                                         item = item,
                                         onReplyQuoteClick = onReplyQuoteClick,
                                         plusOneMessageIds = plusOneMessageIds,
+                                    showPlusOne = showPlusOne,
+                                    onPlusOne = onPlusOne,
                                         onFileClick = onFileClick,
                                         downloadingFileMsgId = downloadingFileMsgId,
                                         fileDownloadProgress = fileDownloadProgress,
@@ -816,8 +827,6 @@ internal fun ChatDetailMiuix(
                     inputFocusRequester = chatInputFocusRequester,
                     onStartVoiceRecord = onStartVoiceRecord,
                 )
-                                    showPlusOne = showPlusOne,
-                                    onPlusOne = onPlusOne,
                 // 表情面板：输入栏下方的“键盘位”面板。
                 AnimatedVisibility(
                     visible = composer.panel == ChatPanel.Emoji,
@@ -828,6 +837,9 @@ internal fun ChatDetailMiuix(
                         composer = composer,
                         onSendCustomEmoji = onSendCustomEmoji,
                         onSendStickerPackEmoji = onSendStickerPackEmoji,
+                        // 与点击 Unicode emoji 一致：表情文字插入输入框，发送时按普通文本发出。
+                        onSendSuperEmoji = { item -> composer.appendEmoji("[超级:${item.desc}]") },
+                        onSendSystemFace = { item -> composer.appendEmoji("[${item.desc}]") },
                     )
                 }
                 // 附件面板：输入栏下方就地展开（不加额外背景容器，直接铺在页面背景上）。
@@ -865,11 +877,6 @@ internal fun ChatDetailMiuix(
                 }
             },
             onBackToBottom = {
-                backToBottomGestureVisible = false
-                        // 与点击 Unicode emoji 一致：表情文字插入输入框，发送时按普通文本发出。
-                        onSendSuperEmoji = { item -> composer.appendEmoji("[超级:${item.desc}]") },
-                        onSendSystemFace = { item -> composer.appendEmoji("[${item.desc}]") },
-                downAccumulatedPx = 0f
                 fabScope.launch {
                     listState.animateScrollToItem(groupedMessages.lastIndex.coerceAtLeast(0))
                 }
@@ -891,6 +898,8 @@ internal fun ChatMessageItemMiuix(
     item: GroupedChatMessage,
     onReplyQuoteClick: (ChatMessage) -> Unit = {},
     plusOneMessageIds: Set<Long> = emptySet(),
+    showPlusOne: Boolean = false,
+    onPlusOne: (ChatMessage) -> Unit = {},
     onFileClick: (ChatMessage) -> Unit = {},
     downloadingFileMsgId: Long = 0L,
     fileDownloadProgress: Int = -1,
@@ -919,6 +928,8 @@ internal fun ChatMessageItemMiuix(
                 group = item.group,
                 onReplyQuoteClick = onReplyQuoteClick,
                 plusOne = message.chatRecordMsgId in plusOneMessageIds,
+                showPlusOne = showPlusOne,
+                onPlusOne = onPlusOne,
                 onFileClick = onFileClick,
                 downloadingFileMsgId = downloadingFileMsgId,
                 fileDownloadProgress = fileDownloadProgress,
@@ -954,8 +965,6 @@ private fun MessageRowMiuix(
     onArkGroupNoticeClick: (ChatMessage) -> Unit = {},
 ) {
     val isMe = message.isMe
-                showPlusOne = showPlusOne,
-                onPlusOne = onPlusOne,
     val selection = LocalMessageSelection.current
     val selectionActive = selection?.active == true
     Row(
@@ -996,8 +1005,6 @@ private fun MessageRowMiuix(
             val showSenderLabel = group.isGroupStart && if (isMe) isGroupChat else message.showSenderName
             if (showSenderLabel) {
                 Text(
-    showPlusOne: Boolean = false,
-    onPlusOne: (ChatMessage) -> Unit = {},
                     text = if (isMe) {
                         // bridge 对自己消息的 senderName 通常是「我」：优先真实群名片，其次 LiveProfile 昵称，最后「我」。
                         message.senderName
@@ -1033,37 +1040,6 @@ private fun MessageRowMiuix(
                         fileDownloadProgress = fileDownloadProgress,
                         onArkGroupNoticeClick = onArkGroupNoticeClick,
                     )
-                }
-            }
-            if (group.isGroupEnd) {
-                // 不再显示 +1 成功后的「+1」badge（按需求移除）。
-                MessageMetaMiuix(message = message)
-            }
-        }
-        // 多选：对方的消息 checkbox 放整行最右侧，头像+气泡仍贴左。
-        if (!isMe && selection?.active == true) {
-            Spacer(Modifier.weight(1f))
-            MiuixSelectionCheckbox(
-                checked = message.chatRecordMsgId in selection.selectedIds,
-                onToggle = { selection.onToggle(message) },
-                modifier = Modifier.align(Alignment.CenterVertically),
-            )
-        }
-        if (isMe) {
-            ChatAvatarSlotMiuix(
-                message = message,
-                group = group,
-                trailing = true,
-                onAvatarClick = onAvatarClick,
-            )
-        }
-    }
-}
-
-@Composable
-private fun MiuixSelectionCheckbox(
-    checked: Boolean,
-    onToggle: () -> Unit,
                 } else {
                     BubbleActionMenuHost(
                         message = message,
@@ -1094,6 +1070,61 @@ private fun MiuixSelectionCheckbox(
                         Spacer(Modifier.width(8.dp))
                         PlusOneCircleMiuix(plusOne = plusOne, onClick = { onPlusOne(message) })
                     }
+                }
+            } else {
+                Box(modifier = Modifier.widthIn(max = 284.dp)) { bubbleContentMiuix() }
+            }
+            if (group.isGroupEnd) {
+                // 不再显示 +1 成功后的「+1」badge（按需求移除）。
+                MessageMetaMiuix(message = message)
+            }
+        }
+        // 多选：对方的消息 checkbox 放整行最右侧，头像+气泡仍贴左。
+        if (!isMe && selection?.active == true) {
+            Spacer(Modifier.weight(1f))
+            MiuixSelectionCheckbox(
+                checked = message.chatRecordMsgId in selection.selectedIds,
+                onToggle = { selection.onToggle(message) },
+                modifier = Modifier.align(Alignment.CenterVertically),
+            )
+        }
+        if (isMe) {
+            ChatAvatarSlotMiuix(
+                message = message,
+                group = group,
+                trailing = true,
+                onAvatarClick = onAvatarClick,
+            )
+        }
+    }
+}
+
+/** 气泡右侧的「+1」圆钮（双击加一开关开启时显示，Miuix 官方 Surface 样式）。 */
+@Composable
+private fun PlusOneCircleMiuix(plusOne: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(colorScheme.primaryContainer)
+            // 双击 +1 圆钮才复读（单击不触发）。
+            .pointerInput(Unit) {
+                detectTapGestures(onDoubleTap = { onClick() })
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        MiuixText(
+            text = "+1",
+            fontSize = 11.sp,
+            color = colorScheme.onPrimaryContainer,
+        )
+    }
+}
+
+@Composable
+private fun MiuixSelectionCheckbox(
+    checked: Boolean,
+    onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     top.yukonga.miuix.kmp.basic.Checkbox(
@@ -1125,28 +1156,6 @@ private fun ChatAvatarSlotMiuix(
         val avatarModifier = sidePadding
             .padding(bottom = if (hasMeta) ChatAvatarMetaLift else 0.dp)
             .then(
-/** 气泡右侧的「+1」圆钮（双击加一开关开启时显示，Miuix 官方 Surface 样式）。 */
-@Composable
-private fun PlusOneCircleMiuix(plusOne: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(26.dp)
-            .clip(androidx.compose.foundation.shape.CircleShape)
-            .background(colorScheme.primaryContainer)
-            // 双击 +1 圆钮才复读（单击不触发）。
-            .pointerInput(Unit) {
-                detectTapGestures(onDoubleTap = { onClick() })
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        MiuixText(
-            text = "+1",
-            fontSize = 11.sp,
-            color = colorScheme.onPrimaryContainer,
-        )
-    }
-}
-
                 if (avatarClickable) {
                     Modifier.clickable { onAvatarClick(message) }
                 } else {
@@ -1249,6 +1258,9 @@ private fun ChatBubbleMiuix(
             downloadProgress = fileDownloadProgress,
         )
         ChatMessageType.VOICE -> VoiceBubbleMiuix(message, container, content, position)
+        ChatMessageType.CALL -> CallBubbleMiuix(message, container, content, position)
+        ChatMessageType.SUPER_EMOJI -> SuperEmojiBubbleMiuix(message, container, content, position)
+        ChatMessageType.SYS_FACE -> SystemFaceBubbleMiuix(message, container, content, position)
         ChatMessageType.RED_PACKET -> RedPacketBubbleMiuix(message, position)
         ChatMessageType.LINK -> LinkBubbleMiuix(message, container, content, position)
         ChatMessageType.CHAT_RECORD -> ChatRecordBubbleMiuix(message, container, content, position)
@@ -1295,98 +1307,6 @@ private fun TextBubbleMiuix(
     }
 }
 
-/**
- * 多元素消息气泡（Miuix）：外层沿用气泡形状/背景，内部按 [ChatMessage.parts] 顺序竖排。
- * 文本可点链接，图片宽 ≤200dp / 表情图约 110dp（无气泡底），无路径时显示占位。
- */
-@Composable
-private fun MultiPartBubbleMiuix(
-    message: ChatMessage,
-    container: Color,
-    content: Color,
-    position: ChatBubblePosition,
-) {
-    val navigator = LocalNavigator.current
-    val imageLabel = stringResource(R.string.chat_image_message)
-    val secondaryContainer = colorScheme.secondaryContainer
-    val tertiaryContainer = colorScheme.tertiaryContainer
-    val gradient = remember(secondaryContainer, tertiaryContainer) {
-        Brush.linearGradient(listOf(secondaryContainer, tertiaryContainer))
-    }
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val uriHandler = remember(context) { openLinkHandler(context) }
-    androidx.compose.runtime.CompositionLocalProvider(
-        androidx.compose.ui.platform.LocalUriHandler provides uriHandler,
-    ) {
-        Column(
-            modifier = Modifier
-                .clip(ChatMiuixBubbleShape)
-                .background(container)
-                .padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            message.parts.forEach { part ->
-                when (part.kind) {
-                    ChatPartKind.TEXT -> Text(
-                        text = linkifyContent(
-                            part.text,
-                            if (message.isMe) content else colorScheme.primary,
-                        ),
-                        fontSize = 15.sp,
-                        color = content,
-                    )
-                    ChatPartKind.IMAGE -> {
-                        val emojiPart = part.emojiImage
-                        val ratio = remember(
-        ChatMessageType.CALL -> CallBubbleMiuix(message, container, content, position)
-        ChatMessageType.SUPER_EMOJI -> SuperEmojiBubbleMiuix(message, container, content, position)
-        ChatMessageType.SYS_FACE -> SystemFaceBubbleMiuix(message, container, content, position)
-                            part.imagePath,
-                            part.imageWidth,
-                            part.imageHeight,
-                        ) {
-                            val raw = if (part.imageWidth > 0 && part.imageHeight > 0) {
-                                part.imageWidth.toFloat() / part.imageHeight
-                            } else {
-                                1.4f
-                            }
-                            if (emojiPart) raw.coerceIn(0.5f, 2f) else raw.coerceIn(0.6f, 1.8f)
-                        }
-                        val imageModifier = if (emojiPart) {
-                            Modifier.width(110.dp).aspectRatio(ratio)
-                        } else {
-                            Modifier.widthIn(max = 200.dp).aspectRatio(ratio)
-                        }
-                        Box(
-                            modifier = imageModifier
-                                .clip(RoundedCornerShape(if (emojiPart) 6.dp else 10.dp))
-                                .then(
-                                    if (emojiPart) {
-                                        Modifier
-                                    } else {
-                                        Modifier.background(gradient)
-                                    },
-                                )
-                                .clickable {
-                                    part.imagePath?.let {
-                                        navigator.push(
-                                            Route.ChatImage(
-                                                imagePath = it,
-                                                chatId = message.chatId,
-                                                msgId = message.msgId,
-                                                elementId = part.elementId,
-                                            ),
-                                        )
-                                    }
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (part.imagePath != null) {
-                                AnimatedOrStaticImage(
-                                    path = part.imagePath,
-                                    contentDescription = imageLabel,
-                                    contentScale = if (emojiPart) {
-                                        ContentScale.Fit
 /** 「文字 + QQ 小黄脸」行内气泡（Miuix）：InlineTextContent 与文字同高。 */
 @Composable
 private fun InlinePartsBubbleMiuix(
@@ -1472,6 +1392,19 @@ private fun InlinePartsBubbleMiuix(
     }
 }
 
+/**
+ * 多元素消息气泡（Miuix）：外层沿用气泡形状/背景，内部按 [ChatMessage.parts] 顺序竖排。
+ * 文本可点链接，图片宽 ≤200dp / 表情图约 110dp（无气泡底），无路径时显示占位。
+ */
+@Composable
+private fun MultiPartBubbleMiuix(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+) {
+    val navigator = LocalNavigator.current
+    val imageLabel = stringResource(R.string.chat_image_message)
     // 只有「文字 + 小黄脸」时走行内渲染：表情和文字同高。
     if (message.parts.none {
             it.kind == ChatPartKind.IMAGE && !it.isSystemFace && !it.isSuperEmoji
@@ -1480,6 +1413,82 @@ private fun InlinePartsBubbleMiuix(
         InlinePartsBubbleMiuix(message, container, content, position)
         return
     }
+    val secondaryContainer = colorScheme.secondaryContainer
+    val tertiaryContainer = colorScheme.tertiaryContainer
+    val gradient = remember(secondaryContainer, tertiaryContainer) {
+        Brush.linearGradient(listOf(secondaryContainer, tertiaryContainer))
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val uriHandler = remember(context) { openLinkHandler(context) }
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalUriHandler provides uriHandler,
+    ) {
+        Column(
+            modifier = Modifier
+                .clip(ChatMiuixBubbleShape)
+                .background(container)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            message.parts.forEach { part ->
+                when (part.kind) {
+                    ChatPartKind.TEXT -> Text(
+                        text = linkifyContent(
+                            part.text,
+                            if (message.isMe) content else colorScheme.primary,
+                        ),
+                        fontSize = 15.sp,
+                        color = content,
+                    )
+                    ChatPartKind.IMAGE -> {
+                        val emojiPart = part.emojiImage
+                        val ratio = remember(
+                            part.imagePath,
+                            part.imageWidth,
+                            part.imageHeight,
+                        ) {
+                            val raw = if (part.imageWidth > 0 && part.imageHeight > 0) {
+                                part.imageWidth.toFloat() / part.imageHeight
+                            } else {
+                                1.4f
+                            }
+                            if (emojiPart) raw.coerceIn(0.5f, 2f) else raw.coerceIn(0.6f, 1.8f)
+                        }
+                        val imageModifier = if (emojiPart) {
+                            Modifier.width(110.dp).aspectRatio(ratio)
+                        } else {
+                            Modifier.widthIn(max = 200.dp).aspectRatio(ratio)
+                        }
+                        Box(
+                            modifier = imageModifier
+                                .clip(RoundedCornerShape(if (emojiPart) 6.dp else 10.dp))
+                                .then(
+                                    if (emojiPart) {
+                                        Modifier
+                                    } else {
+                                        Modifier.background(gradient)
+                                    },
+                                )
+                                .clickable {
+                                    part.imagePath?.let {
+                                        navigator.push(
+                                            Route.ChatImage(
+                                                imagePath = it,
+                                                chatId = message.chatId,
+                                                msgId = message.msgId,
+                                                elementId = part.elementId,
+                                            ),
+                                        )
+                                    }
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (part.imagePath != null) {
+                                AnimatedOrStaticImage(
+                                    path = part.imagePath,
+                                    contentDescription = imageLabel,
+                                    contentScale = if (emojiPart) {
+                                        ContentScale.Fit
                                     } else {
                                         ContentScale.Crop
                                     },
@@ -1731,6 +1740,92 @@ private fun FileBubbleMiuix(
     }
 }
 
+/** QQ 系统小黄脸（Miuix）：与混排一致的行内渲染。 */
+@Composable
+private fun SystemFaceBubbleMiuix(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+) {
+    InlinePartsBubbleMiuix(
+        message = message,
+        container = container,
+        content = content,
+        position = position,
+        parts = listOf(
+            ChatPart(
+                kind = ChatPartKind.IMAGE,
+                imagePath = message.imagePath,
+                imageWidth = 1,
+                imageHeight = 1,
+                emojiImage = true,
+                isSystemFace = true,
+            ),
+        ),
+    )
+}
+
+/** 超级表情（Miuix）：与混排一致的行内渲染。 */
+@Composable
+private fun SuperEmojiBubbleMiuix(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+) {
+    InlinePartsBubbleMiuix(
+        message = message,
+        container = container,
+        content = content,
+        position = position,
+        parts = listOf(
+            ChatPart(
+                kind = ChatPartKind.IMAGE,
+                imageWidth = 1,
+                imageHeight = 1,
+                emojiImage = true,
+                isSuperEmoji = true,
+                superEmojiLottiePath = message.superEmojiLottiePath,
+                superEmojiImagePath = message.superEmojiImagePath,
+                faceDescription = message.content,
+            ),
+        ),
+    )
+}
+
+/** 通话记录气泡：语音/视频通话图标 + TIM 原生文案（Miuix 版）。 */
+@Composable
+private fun CallBubbleMiuix(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+) {
+    Row(
+        modifier = Modifier
+            .clip(ChatMiuixBubbleShape)
+            .background(container)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = if (message.callVideo) Icons.Filled.Videocam else Icons.Filled.Call,
+            contentDescription = null,
+            tint = content.copy(alpha = 0.85f),
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = message.content.ifBlank { if (message.callVideo) "视频通话" else "语音通话" },
+            fontSize = 15.sp,
+            color = content,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 @Composable
 private fun VoiceBubbleMiuix(
     message: ChatMessage,
@@ -1828,92 +1923,6 @@ private fun RedPacketBubbleMiuix(message: ChatMessage, position: ChatBubblePosit
     }
     val stateText = message.redPacketStateText
     val claimed = grabbed || stateText.contains("已")
-/** QQ 系统小黄脸（Miuix）：与混排一致的行内渲染。 */
-@Composable
-private fun SystemFaceBubbleMiuix(
-    message: ChatMessage,
-    container: Color,
-    content: Color,
-    position: ChatBubblePosition,
-) {
-    InlinePartsBubbleMiuix(
-        message = message,
-        container = container,
-        content = content,
-        position = position,
-        parts = listOf(
-            ChatPart(
-                kind = ChatPartKind.IMAGE,
-                imagePath = message.imagePath,
-                imageWidth = 1,
-                imageHeight = 1,
-                emojiImage = true,
-                isSystemFace = true,
-            ),
-        ),
-    )
-}
-
-/** 超级表情（Miuix）：与混排一致的行内渲染。 */
-@Composable
-private fun SuperEmojiBubbleMiuix(
-    message: ChatMessage,
-    container: Color,
-    content: Color,
-    position: ChatBubblePosition,
-) {
-    InlinePartsBubbleMiuix(
-        message = message,
-        container = container,
-        content = content,
-        position = position,
-        parts = listOf(
-            ChatPart(
-                kind = ChatPartKind.IMAGE,
-                imageWidth = 1,
-                imageHeight = 1,
-                emojiImage = true,
-                isSuperEmoji = true,
-                superEmojiLottiePath = message.superEmojiLottiePath,
-                superEmojiImagePath = message.superEmojiImagePath,
-                faceDescription = message.content,
-            ),
-        ),
-    )
-}
-
-/** 通话记录气泡：语音/视频通话图标 + TIM 原生文案（Miuix 版）。 */
-@Composable
-private fun CallBubbleMiuix(
-    message: ChatMessage,
-    container: Color,
-    content: Color,
-    position: ChatBubblePosition,
-) {
-    Row(
-        modifier = Modifier
-            .clip(ChatMiuixBubbleShape)
-            .background(container)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = if (message.callVideo) Icons.Filled.Videocam else Icons.Filled.Call,
-            contentDescription = null,
-            tint = content.copy(alpha = 0.85f),
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = message.content.ifBlank { if (message.callVideo) "视频通话" else "语音通话" },
-            fontSize = 15.sp,
-            color = content,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
     val statusRes = when {
         !canOpen -> R.string.chat_detail_red_packet_open
         claimed -> R.string.chat_red_packet_grabbed
@@ -2141,7 +2150,7 @@ private fun ChatInputBarMiuix(
                 imageVector = MiuixIcons.Mic,
                 contentDescription = stringResource(R.string.chat_voice),
                 tint = colorScheme.onSurfaceVariantSummary,
-                modifier = Modifier.size(26.dp),
+                modifier = Modifier.size(22.dp),
             )
         }
         Row(
@@ -2243,7 +2252,7 @@ private fun ChatInputBarMiuix(
                     imageVector = MiuixIcons.Close,
                     contentDescription = stringResource(R.string.chat_input_close),
                     tint = colorScheme.onSurfaceVariantSummary,
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier.size(24.dp),
                 )
             }
             composer.text.isEmpty() -> Box(
@@ -2711,6 +2720,8 @@ private fun ChatFloatingActionsMiuix(
     modifier: Modifier = Modifier,
 ) {
     val margin = 16.dp
+    val fabSize = 40.dp
+    val gap = 16.dp
     val density = LocalDensity.current
     val marginPx = with(density) { margin.roundToPx() }
     val navBottomDp = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -2743,8 +2754,6 @@ private fun ChatFloatingActionsMiuix(
             ) {
                 Icon(
                     imageVector = Icons.Filled.KeyboardArrowDown,
-    val fabSize = 40.dp
-    val gap = 16.dp
                     contentDescription = stringResource(R.string.chat_back_to_bottom),
                     tint = colorScheme.onPrimary,
                     modifier = Modifier.size(22.dp),
@@ -2775,7 +2784,12 @@ private fun ChatFloatingActionsMiuix(
     }
 }
 
-/** Miuix 浮动圆形按钮（44dp，阴影 + primary 底色，与 M3E 尺寸/间距一致）。 */
+/**
+ * Miuix 聊天页顶栏「头像 + 居中标题」overlay：
+ * - 标题仍按 Miuix 顶栏样式居中绘制；
+ * - 头像通过自定义 Layout 贴在标题左边缘固定 8dp 处（不依赖标题字数，也不会固定在返回键旁）。
+ * 这样无论标题多长，头像始终跟随标题左侧。
+ */
 @Composable
 private fun ChatTopBarTitleWithAvatarMiuix(chat: ChatItem, subtitle: String) {
     val density = LocalDensity.current
@@ -2822,13 +2836,33 @@ private fun ChatTopBarTitleWithAvatarMiuix(chat: ChatItem, subtitle: String) {
             },
         ),
         modifier = Modifier
-            .size(44.dp)
-            .shadow(elevation = 6.dp, shape = CircleShape)
-            .clip(CircleShape)
-            .background(colorScheme.primary)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        content()
-    }
+            .fillMaxWidth()
+            .padding(top = statusBarTop)
+            .height(barHeight),
+        measurePolicy = object : androidx.compose.ui.layout.MultiContentMeasurePolicy {
+            override fun androidx.compose.ui.layout.MeasureScope.measure(
+                measurables: List<List<androidx.compose.ui.layout.Measurable>>,
+                constraints: Constraints,
+            ): androidx.compose.ui.layout.MeasureResult {
+                val avatar = measurables[0].first()
+                    .measure(Constraints.fixed(avatarSizePx, avatarSizePx))
+                val maxTitleWidth =
+                    (constraints.maxWidth - avatarSizePx * 2 - gapPx * 2).coerceAtLeast(0)
+                val title = measurables[1].first()
+                    .measure(Constraints(maxWidth = maxTitleWidth))
+                val heightPx = constraints.maxHeight
+                return layout(constraints.maxWidth, heightPx) {
+                    // 标题中心 = 顶栏中心；头像右边缘 = 标题左边缘 - 8dp。
+                    val textLeft = (constraints.maxWidth / 2 - title.width / 2)
+                        .coerceAtLeast(avatarSizePx + gapPx)
+                    title.placeRelative(textLeft, (heightPx - title.height) / 2)
+                    avatar.placeRelative(
+                        (textLeft - gapPx - avatarSizePx).coerceAtLeast(0),
+                        (heightPx - avatarSizePx) / 2,
+                    )
+                }
+            }
+        },
+    )
 }
+

@@ -143,9 +143,8 @@ fun ChatPagerMiuix(
     val density = LocalDensity.current
 
     val scrollBehavior = MiuixScrollBehavior()
-    val dynamicTopPadding by remember {
-        derivedStateOf { 12.dp * (1f - scrollBehavior.state.collapsedFraction) }
-    }
+    // 首页顶栏固定收起：搜索栏顶部 padding 固定为收起态值，不再随滑动变化。
+    val dynamicTopPadding = 12.dp
 
     // Phase 2b：页面级 Glass 采样 backdrop（关闭模糊/无 runtime shader 时为 null，纯色回退）。
     val backdrop = rememberPageBackdrop(enableBlur)
@@ -226,6 +225,7 @@ fun ChatPagerMiuix(
             HyperTopAppBar(
                 title = stringResource(R.string.chats),
                 scrollBehavior = scrollBehavior,
+                expandable = false,
                 backdrop = backdrop,
                 actions = {
                     if (plusMenuGlassMode) {

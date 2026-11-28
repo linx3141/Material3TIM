@@ -46,9 +46,9 @@ class SettingsViewModel(
                     enableFloatingBottomBarBlur = repo.enableFloatingBottomBarBlur,
                     enableLauncherFloatingToolbar = repo.enableLauncherFloatingToolbar,
                     enableNavigationBadge = repo.enableNavigationBadge,
-                    showTopAppBar = repo.showTopAppBar,
                     enableDoubleTapPlusOne = repo.enableDoubleTapPlusOne,
                     showChatTopBarAvatar = repo.showChatTopBarAvatar,
+                    showTopAppBar = repo.showTopAppBar,
                     topAppBarStyle = repo.topAppBarStyle,
                     showNavigationBar = repo.showNavigationBar,
                     navigationBarMode = repo.navigationBarMode,
@@ -60,7 +60,6 @@ class SettingsViewModel(
         }
     }
 
-    fun setUiMode(mode: String) {
     fun setShowChatTopBarAvatar(enabled: Boolean) {
         repo.showChatTopBarAvatar = enabled
         _uiState.update { it.copy(showChatTopBarAvatar = enabled) }
@@ -71,6 +70,7 @@ class SettingsViewModel(
         _uiState.update { it.copy(enableDoubleTapPlusOne = enabled) }
     }
 
+    fun setUiMode(mode: String) {
         val oldMode = repo.uiMode
         val currentThemeMode = repo.themeMode
 

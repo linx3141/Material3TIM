@@ -3257,7 +3257,7 @@ internal object TimBridge {
             val groupMuteMasks = groupMuteMasksFor(groupCodes)
             // wrapper a() 的 RecentContactInfo 是精简版（atType/listOfSpecific 为空），
             // 用内核 recent 快照的完整对象补提醒标签字段；失败自动回退原对象。
-            val tagSources = recentContactSnapshotFullMap()
+            val tagSources = buildTagSources()
             val chats = raw.mapNotNull { info ->
                 info?.let { mapRecentContact(it, groupMuteMasks, tagSources) }
             }
@@ -3585,7 +3585,7 @@ internal object TimBridge {
                     if (type == 2 && uin > 0L) uin else null
                 }
                 val masks = runCatching { groupMuteMasksFor(codes) }.getOrDefault(emptyMap())
-                val tagSources = recentContactSnapshotFullMap()
+                val tagSources = buildTagSources()
                 val mapped = ArrayList<ChatItem>(raw.size)
                 for (info in raw) {
                     val chatType = (invokeGetter(info, "getChatType") as? Number)?.toInt() ?: 0
@@ -3683,6 +3683,11 @@ internal object TimBridge {
      * 4) 同时收集所有事件 msgInfos 的 msgSeq，供聊天页「向上箭头」按钮逐条跳转。
      * 反射失败一律空结果，不崩。
      */
+    private data class PreviewTagResult(
+        val tag: ChatPreviewTag?,
+        val eventSeqs: List<Long> = emptyList(),
+    )
+
     private fun chatPreviewTag(
         info: Any,
         unread: Int,
@@ -3693,9 +3698,9 @@ internal object TimBridge {
         if (unread <= 0) return PreviewTagResult(null)
         return runCatching {
             // wrapper a() 的精简 RecentContactInfo 里 atType/listOfSpecific/specialCareFlag 是空的，
-            // 优先用 recent 快照里的完整对象；快照字段缺失时再回退原对象。
+            // 优先用完整 recent 对象；字段缺失时再回退原对象。
             val source = tagSource ?: info
-            val sourceLabel = if (tagSource != null) "snapshot" else "recent"
+            val sourceLabel = if (tagSource != null) "full" else "recent"
             val atType = readTagInt(source, "getAtType")
                 .takeIf { it != 0 } ?: readTagInt(info, "getAtType")
             val events = msgBoxEvents(source).ifEmpty { msgBoxEvents(info) }
@@ -3725,6 +3730,8 @@ internal object TimBridge {
                 }
             }
             if (tag != null && loggedChatTags.add("$chatId|$tag")) {
+                val digests = msgBoxEventDigests(source)
+                    .ifEmpty { msgBoxEventDigests(info) }
                 Log.i(
                     TAG,
                     "chatTag: chatId=$chatId atType=$atType events=$eventTypes digests=$digests " +
@@ -3738,11 +3745,6 @@ internal object TimBridge {
     /** 读取标签相关 int 字段，失败返回 0（不抛异常）。 */
     private fun readTagInt(target: Any, getter: String): Int =
         runCatching { (invokeGetter(target, getter) as? Number)?.toInt() ?: 0 }.getOrDefault(0)
-    private data class PreviewTagResult(
-        val tag: ChatPreviewTag?,
-        val eventSeqs: List<Long> = emptyList(),
-    )
-
 
     /**
      * 内核 recent 快照（IKernelRecentContactService.getRecentContactListSnapShot(limit, cb)）：
@@ -3812,6 +3814,14 @@ internal object TimBridge {
         }
     }
 
+    /** 完整最近会话列表缓存（getRecentContactInfos 回调，含所有会话的 atType/msgBox 事件）。 */
+    private var recentFullMapCache: Map<String, Any> = emptyMap()
+    private var recentFullMapAt = 0L
+    private val fullMapFailLog = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 最近会话完整对象缓存有效期：标签/事件 seq 允许有少量延迟，避免每次刷新都整表拉取。 */
+    private val RECENT_FULL_MAP_TTL_MS = 10_000L
+
     /**
      * 内核完整最近会话列表（IKernelRecentContactService.getRecentContactInfos(callback)）。
      *
@@ -3820,7 +3830,57 @@ internal object TimBridge {
      * 标签和事件 seq 拿不到。这里改用完整列表补全所有会话；失败时回退 snapshot。
      * 阻塞等待回调，需在 IO 线程调用；结果缓存 10s。
      */
-    private fun latestMsgBoxEventType(info: Any): Int {
+    private fun recentContactFullMap(): Map<String, Any> {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - recentFullMapAt < RECENT_FULL_MAP_TTL_MS) return recentFullMapCache
+        // 失败也节流 10s，避免每次 loadRecentChats 都重试并刷日志。
+        fun fail(reason: String): Map<String, Any> {
+            recentFullMapAt = now
+            if (fullMapFailLog.compareAndSet(false, true)) {
+                Log.w(TAG, "chatTag: full recent list unavailable: $reason")
+            }
+            return recentFullMapCache
+        }
+        val cl = hostClassLoader() ?: return fail("classLoader=null")
+        val service = recentContactService ?: return fail("service=null")
+        val target = resolveKernelMethod(service, "getRecentContactInfos", 1)
+            ?: return fail("method not found (${service.javaClass.name})")
+        val args = awaitCallback(
+            cl,
+            "com.tencent.qqnt.kernel.nativeinterface.IKernelRecentGetContactCallback",
+            3_000L,
+        ) { proxy -> target.second.invoke(target.first, proxy) }
+            ?: return fail("callback null/timeout")
+        @Suppress("UNCHECKED_CAST")
+        val list = args.getOrNull(2) as? List<Any?> ?: return fail("args[2] not list")
+        val code = (args.getOrNull(0) as? Number)?.toInt() ?: -1
+        val map = LinkedHashMap<String, Any>(list.size)
+        for (item in list) {
+            item ?: continue
+            val chatType = (invokeGetter(item, "getChatType") as? Number)?.toInt() ?: 0
+            val peerUid = invokeGetter(item, "getPeerUid") as? String ?: ""
+            val peerUin = (invokeGetter(item, "getPeerUin") as? Number)?.toLong() ?: 0L
+            val chatId = buildChatId(chatType, peerUid, peerUin) ?: continue
+            map[chatId] = item
+        }
+        recentFullMapCache = map
+        recentFullMapAt = now
+        fullMapFailLog.set(false)
+        Log.i(TAG, "chatTag: full recent list code=$code size=${map.size}")
+        return map
+    }
+
+    /** 标签数据源：完整 recent list 为主，snapshot（changedList）覆盖更新较新的对象。 */
+    private fun buildTagSources(): Map<String, Any> {
+        val full = recentContactFullMap()
+        val snapshot = recentContactSnapshotFullMap()
+        if (full.isEmpty()) return snapshot
+        if (snapshot.isEmpty()) return full
+        return LinkedHashMap<String, Any>(full).apply { putAll(snapshot) }
+    }
+
+    /** 事件类型 -> highlightDigest（TIM 可能用 digest 显示实际标签文案；调试用）。 */
+    private fun msgBoxEventDigests(info: Any): Map<Int, String> {
         @Suppress("UNCHECKED_CAST")
         val events = (invokeGetter(info, "getListOfSpecificEventTypeInfosInMsgBox") as? List<Any?>)
             .orEmpty()
@@ -3852,17 +3912,29 @@ internal object TimBridge {
             val eventType = (invokeGetter(event, "getEventTypeInMsgBox") as? Number)?.toInt() ?: continue
             @Suppress("UNCHECKED_CAST")
             val msgInfos = (invokeGetter(event, "getMsgInfos") as? List<Any?>).orEmpty()
-            val lastSeq = (msgInfos.lastOrNull()?.let { invokeGetter(it, "getMsgSeq") } as? Number)
-                ?.toLong() ?: continue
-            val priority = typePriority[eventType] ?: Int.MAX_VALUE
-            if (lastSeq > bestSeq || (lastSeq == bestSeq && priority < bestPriority)) {
-                bestSeq = lastSeq
-                bestType = eventType
-                bestPriority = priority
+            for (msgInfo in msgInfos) {
+                msgInfo ?: continue
+                val seq = (invokeGetter(msgInfo, "getMsgSeq") as? Number)?.toLong() ?: continue
+                result.add(eventType to seq)
             }
         }
-        return bestType
+        return result
     }
+
+    /** DataLine 设备会话识别统一走共享 [DataLine]。 */
+    private fun dataLineKind(peerUid: String?): Int = DataLine.kindOf(peerUid)
+
+    private fun dataLineTitle(kind: Int): String = DataLine.title(kind)
+
+    private fun loadDataLineChatInfo(chat: ChatItem): ChatInfoData = ChatInfoData(
+        chat = chat,
+        members = emptyList(),
+        notice = "",
+        // 设备会话没有 QQ 号；不要显示 peerUid 乱文字。
+        timId = "",
+        description = "跨设备文件传输",
+        memberCount = 0,
+    )
 
     private fun mapRecentContact(
         info: Any,
@@ -3876,6 +3948,14 @@ internal object TimBridge {
         // TIM 群助手是主列表里的伪会话：chatType=7（RecentContactChatItem type 7）/ peerUin=9994。
         val isTroopAssistant = chatType == 7 || peerUin == troopAssistantUin ||
             peerUid == troopAssistantUin.toString()
+        // TIM DataLine 设备会话（我的手机/电脑/平板）：chatType=8，标题/图标需要专门显示。
+        // peerUid 走 TIM 的 PeerUid.DATALINE_* 常量；万一 TIM 新增设备类型，兜底成「我的设备」。
+        val dataLineKind = when {
+            isTroopAssistant -> 0
+            dataLineKind(peerUid) != 0 -> dataLineKind(peerUid)
+            chatType == 8 -> 4
+            else -> 0
+        }
         val remark = invokeGetter(info, "getRemark") as? String
         val peerName = invokeGetter(info, "getPeerName") as? String
         val memberName = invokeGetter(info, "getMemberName") as? String
@@ -3884,6 +3964,7 @@ internal object TimBridge {
 
         val title = when {
             isTroopAssistant -> "群助手"
+            dataLineKind != 0 -> dataLineTitle(dataLineKind)
             isGroup -> peerName?.takeIf { it.isNotBlank() }
                 ?: memberName?.takeIf { it.isNotBlank() }
                 ?: "群聊($peerUin)"
@@ -4003,21 +4084,6 @@ internal object TimBridge {
         Log.w(TAG, "mapRecentContact failed: ${t.javaClass.simpleName} ${t.message}")
         null
     }
-    /** DataLine 设备会话识别统一走共享 [DataLine]。 */
-    private fun dataLineKind(peerUid: String?): Int = DataLine.kindOf(peerUid)
-
-    private fun dataLineTitle(kind: Int): String = DataLine.title(kind)
-
-    private fun loadDataLineChatInfo(chat: ChatItem): ChatInfoData = ChatInfoData(
-        chat = chat,
-        members = emptyList(),
-        notice = "",
-        // 设备会话没有 QQ 号；不要显示 peerUid 乱文字。
-        timId = "",
-        description = "跨设备文件传输",
-        memberCount = 0,
-    )
-
 
     private fun sendRemarkSafe(info: Any, memberName: String?, nickName: String?): String? {
         val remark = invokeGetter(info, "getSendRemarkName") as? String
@@ -4030,14 +4096,6 @@ internal object TimBridge {
     // 我的资料
     // ---------------------------------------------------------------------
 
-        // TIM DataLine 设备会话（我的手机/电脑/平板）：chatType=8，标题/图标需要专门显示。
-        // peerUid 走 TIM 的 PeerUid.DATALINE_* 常量；万一 TIM 新增设备类型，兜底成「我的设备」。
-        val dataLineKind = when {
-            isTroopAssistant -> 0
-            dataLineKind(peerUid) != 0 -> dataLineKind(peerUid)
-            chatType == 8 -> 4
-            else -> 0
-        }
     /** 读取当前登录账号资料（昵称 / QQ 号 / 头像）。阻塞，需在 IO 线程调用。 */
     fun loadSelfProfile(): UserProfile? {
         if (!isHost) return null
@@ -4046,7 +4104,6 @@ internal object TimBridge {
             val deadline = android.os.SystemClock.uptimeMillis() + 1_200L
             while (android.os.SystemClock.uptimeMillis() < deadline &&
                 (avatarService == null || myUid == null)
-            dataLineKind != 0 -> dataLineTitle(dataLineKind)
             ) {
                 Thread.sleep(120L)
                 ensureServices()
@@ -4357,77 +4414,6 @@ internal object TimBridge {
         return element to clazz
     }
 
-    /** 发送文本消息。阻塞，需在 IO 线程调用。 */
-    fun sendTextMessage(chatId: String, text: String): Boolean {
-        if (!isHost) return false
-        val cl = hostClassLoader() ?: return false
-        return try {
-            val catalog = faceTokenCatalog()
-            val elements = ArrayList<Any>()
-            var matchedFace = false
-            if (catalog.isNotEmpty() && text.contains('[')) {
-                var last = 0
-                Regex("\\[([^\\[\\]]{1,12})\\]").findAll(text).forEach { match ->
-                    val desc = match.groupValues[1]
-                    val token = catalog[desc] ?: return@forEach
-                    val start = match.range.first
-                    if (start > last) elements.add(buildTextElement(cl, text.substring(last, start)))
-                    elements.add(buildFaceElement(cl, token, desc))
-                    last = match.range.last + 1
-                    matchedFace = true
-                }
-                if (matchedFace && last < text.length) {
-                    elements.add(buildTextElement(cl, text.substring(last)))
-                }
-            }
-            if (!matchedFace) {
-                elements.clear()
-                elements.add(buildTextElement(cl, text))
-            }
-            sendElements(chatId, elements)
-        } catch (t: Throwable) {
-            Log.e(TAG, "sendTextMessage failed: ${t.javaClass.simpleName} ${t.message}", t)
-            false
-        }
-    }
-
-    /** 转发消息到若干会话（内核 forwardMsg）。阻塞，需在 IO 线程调用。 */
-    fun forwardMessages(srcChatId: String, msgIds: List<Long>, dstChatIds: List<String>): Boolean {
-        if (!isHost || msgIds.isEmpty() || dstChatIds.isEmpty()) return false
-        if (!ensureServices()) return false
-        val srcContact = contacts[srcChatId] ?: return false
-        val dstContacts = dstChatIds.mapNotNull { contacts[it] }
-        if (dstContacts.isEmpty()) return false
-        val service = msgService ?: return false
-        val cl = hostClassLoader() ?: return false
-        return try {
-            val callbackClass = Class.forName(
-                "com.tencent.qqnt.kernel.nativeinterface.IForwardOperateCallback", false, cl,
-            )
-            val latch = CountDownLatch(1)
-            var code = -1
-            var message = ""
-            val callback = Proxy.newProxyInstance(cl, arrayOf(callbackClass)) { _, method, args ->
-                if (method.name == "onResult" && args != null) {
-                    code = (args.getOrNull(0) as? Number)?.toInt() ?: -1
-                    message = args.getOrNull(1) as? String ?: ""
-                    latch.countDown()
-                }
-                defaultValueFor(method.returnType)
-            }
-            // TIM 4.1.0 的 forwardMsg 第 4 参是「MsgAttributeInfo 列表」而不是旧版的 HashMap：
-            //   forwardMsg(ArrayList<Long> msgIds, Contact from, ArrayList<Contact> to,
-            //              ArrayList<MsgAttributeInfo> attrs, IForwardOperateCallback cb)
-            // 普通转发不携带额外属性，传空列表即可（群荣誉/机器人等属性场景目前用不到）。
-            val attrs = ArrayList<Any>()
-            val method = service.javaClass.methods.firstOrNull {
-                it.name == "forwardMsg" && it.parameterCount == 5
-            } ?: return false
-            method.invoke(
-                service,
-                ArrayList(msgIds),
-                srcContact,
-                ArrayList(dstContacts),
     /** 输入框里的 `[描述]` 文本 -> QQ 表情元素（发送时解析）。 */
     private class FaceToken(
         val serverId: Int,
@@ -4552,6 +4538,77 @@ internal object TimBridge {
         return element
     }
 
+    /** 发送文本消息。阻塞，需在 IO 线程调用。 */
+    fun sendTextMessage(chatId: String, text: String): Boolean {
+        if (!isHost) return false
+        val cl = hostClassLoader() ?: return false
+        return try {
+            val catalog = faceTokenCatalog()
+            val elements = ArrayList<Any>()
+            var matchedFace = false
+            if (catalog.isNotEmpty() && text.contains('[')) {
+                var last = 0
+                Regex("\\[([^\\[\\]]{1,12})\\]").findAll(text).forEach { match ->
+                    val desc = match.groupValues[1]
+                    val token = catalog[desc] ?: return@forEach
+                    val start = match.range.first
+                    if (start > last) elements.add(buildTextElement(cl, text.substring(last, start)))
+                    elements.add(buildFaceElement(cl, token, desc))
+                    last = match.range.last + 1
+                    matchedFace = true
+                }
+                if (matchedFace && last < text.length) {
+                    elements.add(buildTextElement(cl, text.substring(last)))
+                }
+            }
+            if (!matchedFace) {
+                elements.clear()
+                elements.add(buildTextElement(cl, text))
+            }
+            sendElements(chatId, elements)
+        } catch (t: Throwable) {
+            Log.e(TAG, "sendTextMessage failed: ${t.javaClass.simpleName} ${t.message}", t)
+            false
+        }
+    }
+
+    /** 转发消息到若干会话（内核 forwardMsg）。阻塞，需在 IO 线程调用。 */
+    fun forwardMessages(srcChatId: String, msgIds: List<Long>, dstChatIds: List<String>): Boolean {
+        if (!isHost || msgIds.isEmpty() || dstChatIds.isEmpty()) return false
+        if (!ensureServices()) return false
+        val srcContact = contacts[srcChatId] ?: return false
+        val dstContacts = dstChatIds.mapNotNull { contacts[it] }
+        if (dstContacts.isEmpty()) return false
+        val service = msgService ?: return false
+        val cl = hostClassLoader() ?: return false
+        return try {
+            val callbackClass = Class.forName(
+                "com.tencent.qqnt.kernel.nativeinterface.IForwardOperateCallback", false, cl,
+            )
+            val latch = CountDownLatch(1)
+            var code = -1
+            var message = ""
+            val callback = Proxy.newProxyInstance(cl, arrayOf(callbackClass)) { _, method, args ->
+                if (method.name == "onResult" && args != null) {
+                    code = (args.getOrNull(0) as? Number)?.toInt() ?: -1
+                    message = args.getOrNull(1) as? String ?: ""
+                    latch.countDown()
+                }
+                defaultValueFor(method.returnType)
+            }
+            // TIM 4.1.0 的 forwardMsg 第 4 参是「MsgAttributeInfo 列表」而不是旧版的 HashMap：
+            //   forwardMsg(ArrayList<Long> msgIds, Contact from, ArrayList<Contact> to,
+            //              ArrayList<MsgAttributeInfo> attrs, IForwardOperateCallback cb)
+            // 普通转发不携带额外属性，传空列表即可（群荣誉/机器人等属性场景目前用不到）。
+            val attrs = ArrayList<Any>()
+            val method = service.javaClass.methods.firstOrNull {
+                it.name == "forwardMsg" && it.parameterCount == 5
+            } ?: return false
+            method.invoke(
+                service,
+                ArrayList(msgIds),
+                srcContact,
+                ArrayList(dstContacts),
                 attrs,
                 callback,
             )
@@ -7762,6 +7819,11 @@ internal object TimBridge {
             timeLabel = timeLabel,
             isRead = true,
             voiceSeconds = described.voiceSeconds,
+            callVideo = described.callVideo,
+            superEmojiLottiePath = described.superEmojiLottiePath,
+            superEmojiImagePath = described.superEmojiImagePath,
+            superEmojiWidth = described.superEmojiWidth,
+            superEmojiHeight = described.superEmojiHeight,
             fileSize = described.fileSize,
             showSenderName = isGroup && !isMe,
             senderAvatarPath = senderAvatarPath,
@@ -7858,6 +7920,13 @@ internal object TimBridge {
         val redPacketSubtitle: String = "",
         val redPacketStateText: String = "",
         val arkGroupNotice: Boolean = false,
+        /** 通话记录：true=视频通话 */
+        val callVideo: Boolean = false,
+        /** 超级表情：Lottie JSON / 静态兜底图本地路径。 */
+        val superEmojiLottiePath: String? = null,
+        val superEmojiImagePath: String? = null,
+        val superEmojiWidth: Int = 0,
+        val superEmojiHeight: Int = 0,
     )
 
     // ---------------------------------------------------------------------
@@ -8013,11 +8082,6 @@ internal object TimBridge {
         }
         if (linkTitle.isNotBlank() && linkTitle.length <= 40) return linkTitle
         Regex("^\\[([^\\]]+)\\]").find(prompt.trim())?.groupValues?.getOrNull(1)
-            callVideo = described.callVideo,
-            superEmojiLottiePath = described.superEmojiLottiePath,
-            superEmojiImagePath = described.superEmojiImagePath,
-            superEmojiWidth = described.superEmojiWidth,
-            superEmojiHeight = described.superEmojiHeight,
             ?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
         arkText(root, "desc").takeIf { it.isNotBlank() && it.length <= 40 }?.let { return it }
         val mapped = when {
@@ -8114,13 +8178,6 @@ internal object TimBridge {
                     .take(4),
             )
         }
-        /** 通话记录：true=视频通话 */
-        val callVideo: Boolean = false,
-        /** 超级表情：Lottie JSON / 静态兜底图本地路径。 */
-        val superEmojiLottiePath: String? = null,
-        val superEmojiImagePath: String? = null,
-        val superEmojiWidth: Int = 0,
-        val superEmojiHeight: Int = 0,
         val title = source.ifBlank { "聊天记录" }
         val countFromSummary = Regex("(\\d+)\\s*条").find(summary)
             ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
@@ -8601,63 +8658,6 @@ internal object TimBridge {
      * 灰条消息（群主撤回/成员加入/签到提示等）转成纯文本：优先 JSON 灰条的可读摘要，
      * 其次走 TIM 自己的 JsonGrayTipsUtils 解码，最后按 RevokeElement 字段拼装。
      */
-    private fun grayTipText(gray: Any?): String {
-        if (gray == null) return "[系统消息]"
-        // 1) JSON 灰条：recentAbstract 通常就是一句可读摘要
-        val json = invokeGetter(gray, "getJsonGrayTipElement")
-        if (json != null) {
-            (invokeGetter(json, "getRecentAbstract") as? String)
-                ?.takeIf { it.isNotBlank() }
-                ?.let { return it }
-            val decoded = runCatching {
-                val cl = hostClassLoader() ?: return@runCatching null
-                val utilClass = Class.forName("com.tencent.qqnt.graytips.JsonGrayTipsUtils", false, cl)
-                val util = utilClass.getField("f180397b").get(null) ?: return@runCatching null
-                val obj = utilClass.methods
-                    .firstOrNull { it.name == "d" && it.parameterCount == 1 }
-                    ?.invoke(util, json)
-                obj?.let { invokeGetter(it, "c") as? CharSequence }?.toString()
-            }.getOrNull()
-            if (!decoded.isNullOrBlank()) return decoded
-        }
-        // 2) 优先调用 TIM 自己的灰条解码器（群提示/好友提示/撤回/文件/屏蔽等文案与原生完全一致）。
-        //    注意 XML 灰条（subElementType=12）和本地灰条（13）在 TIM 的解码器里会返回
-        //    「暂时不支持的小灰条类型」，需要继续走下面的 XML/本地兜底。
-        decodeGrayTipWithTim(gray)?.let { return it }
-        // 3) XML 灰条：服务端把可读文案放在 XmlElement.content 的属性里，提取出来。
-        val xml = invokeGetter(gray, "getXmlElement")
-        if (xml != null) {
-            xmlGrayText(invokeGetter(xml, "getContent") as? String)?.let { return it }
-        }
-        // 4) 撤回灰条（TIM 解码器失败时兜底）
-        val revoke = invokeGetter(gray, "getRevokeElement")
-        if (revoke != null) {
-            val wording = invokeGetter(revoke, "getWording") as? String
-            val opNick = (invokeGetter(revoke, "getOperatorNick") as? String)
-                ?.takeIf { it.isNotBlank() }
-                ?: (invokeGetter(revoke, "getOperatorRemark") as? String)?.takeIf { it.isNotBlank() }
-            val senderNick = (invokeGetter(revoke, "getOrigMsgSenderNick") as? String)
-                ?.takeIf { it.isNotBlank() }
-            val role = (invokeGetter(revoke, "getOperatorRole") as? Number)?.toInt() ?: 0
-            if (!wording.isNullOrBlank() && wording.contains("撤回")) return wording
-            if (!opNick.isNullOrBlank()) {
-                val selfOperate = (invokeGetter(revoke, "getIsSelfOperate") as? Boolean) ?: false
-                val samePerson = senderNick.isNullOrBlank() || senderNick == opNick || selfOperate
-                return when {
-                    samePerson -> "$opNick 撤回了一条消息"
-                    role == 1 -> "群主 $opNick 撤回了一条成员消息"
-                    role == 2 -> "管理员 $opNick 撤回了一条成员消息"
-                    else -> "$opNick 撤回了一条成员消息"
-                }
-            }
-            if (!wording.isNullOrBlank()) return wording
-            return "有一条消息被撤回"
-        }
-        // 3) 群灰条（成员加入/退出等）
-        val group = invokeGetter(gray, "getGroupElement")
-        if (group != null) {
-            val member = (invokeGetter(group, "getMemberNick") as? String)
-                ?.takeIf { it.isNotBlank() }
     private val timSuperEmojiInfoCache =
         java.util.concurrent.ConcurrentHashMap<Int, SuperEmojiItem>()
 
@@ -9000,13 +9000,127 @@ internal object TimBridge {
         }.getOrNull()?.takeIf { it.isNotEmpty() }
     }
 
-            val sub = (invokeGetter(gray, "getSubElementType") as? Number)?.toInt() ?: 0
-            if (!member.isNullOrBlank()) {
-                return when (sub) {
-                    3, 4 -> "$member 加入了群聊"
-                    5, 6 -> "$member 退出了群聊"
-                    else -> "$member 更新了群资料"
+    private fun grayTipText(gray: Any?): String {
+        if (gray == null) return "[系统消息]"
+        // 1) JSON 灰条：recentAbstract 通常就是一句可读摘要
+        val json = invokeGetter(gray, "getJsonGrayTipElement")
+        if (json != null) {
+            (invokeGetter(json, "getRecentAbstract") as? String)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { return it }
+            val decoded = runCatching {
+                val cl = hostClassLoader() ?: return@runCatching null
+                val utilClass = Class.forName("com.tencent.qqnt.graytips.JsonGrayTipsUtils", false, cl)
+                val util = utilClass.getField("f180397b").get(null) ?: return@runCatching null
+                val obj = utilClass.methods
+                    .firstOrNull { it.name == "d" && it.parameterCount == 1 }
+                    ?.invoke(util, json)
+                obj?.let { invokeGetter(it, "c") as? CharSequence }?.toString()
+            }.getOrNull()
+            if (!decoded.isNullOrBlank()) return decoded
+        }
+        // 2) 优先调用 TIM 自己的灰条解码器（群提示/好友提示/撤回/文件/屏蔽等文案与原生完全一致）。
+        //    注意 XML 灰条（subElementType=12）和本地灰条（13）在 TIM 的解码器里会返回
+        //    「暂时不支持的小灰条类型」，需要继续走下面的 XML/本地兜底。
+        decodeGrayTipWithTim(gray)?.let { return it }
+        // 3) XML 灰条：服务端把可读文案放在 XmlElement.content 的属性里，提取出来。
+        val xml = invokeGetter(gray, "getXmlElement")
+        if (xml != null) {
+            xmlGrayText(invokeGetter(xml, "getContent") as? String)?.let { return it }
+        }
+        // 4) 撤回灰条（TIM 解码器失败时兜底）
+        val revoke = invokeGetter(gray, "getRevokeElement")
+        if (revoke != null) {
+            val wording = invokeGetter(revoke, "getWording") as? String
+            val opNick = (invokeGetter(revoke, "getOperatorNick") as? String)
+                ?.takeIf { it.isNotBlank() }
+                ?: (invokeGetter(revoke, "getOperatorRemark") as? String)?.takeIf { it.isNotBlank() }
+            val senderNick = (invokeGetter(revoke, "getOrigMsgSenderNick") as? String)
+                ?.takeIf { it.isNotBlank() }
+            val role = (invokeGetter(revoke, "getOperatorRole") as? Number)?.toInt() ?: 0
+            if (!wording.isNullOrBlank() && wording.contains("撤回")) return wording
+            if (!opNick.isNullOrBlank()) {
+                val selfOperate = (invokeGetter(revoke, "getIsSelfOperate") as? Boolean) ?: false
+                val samePerson = senderNick.isNullOrBlank() || senderNick == opNick || selfOperate
+                return when {
+                    samePerson -> "$opNick 撤回了一条消息"
+                    role == 1 -> "群主 $opNick 撤回了一条成员消息"
+                    role == 2 -> "管理员 $opNick 撤回了一条成员消息"
+                    else -> "$opNick 撤回了一条成员消息"
                 }
+            }
+            if (!wording.isNullOrBlank()) return wording
+            return "有一条消息被撤回"
+        }
+        // 5) 好友灰条（加好友成功等）
+        val buddy = invokeGetter(gray, "getBuddyElement")
+        if (buddy != null) {
+            val elem = invokeGetter(buddy, "getElem")
+            val friendNick = (elem?.let { invokeGetter(it, "getFriendNick") } as? String)
+                ?.takeIf { it.isNotBlank() }
+            val buddyType = (elem?.let { invokeGetter(it, "getType") } as? Number)?.toInt() ?: 0
+            if (!friendNick.isNullOrBlank()) {
+                return when (buddyType) {
+                    1 -> "你已经和 $friendNick 成为好友，现在可以开始聊天了。"
+                    else -> "你和 $friendNick 已成为好友"
+                }
+            }
+        }
+        // 6) 群灰条（成员加入/退出/群名/禁言/解散等）
+        val group = invokeGetter(gray, "getGroupElement")
+        if (group != null) {
+            val member = (invokeGetter(group, "getMemberNick") as? String)
+                ?.takeIf { it.isNotBlank() }
+                ?: (invokeGetter(group, "getMemberRemark") as? String)?.takeIf { it.isNotBlank() }
+            val admin = (invokeGetter(group, "getAdminNick") as? String)
+                ?.takeIf { it.isNotBlank() }
+            val groupName = (invokeGetter(group, "getGroupName") as? String)
+                ?.takeIf { it.isNotBlank() }
+            val typeName = invokeGetter(group, "getType")?.toString().orEmpty()
+            // 群成员主动加群（subElementType=4）时 type 可能为空，沿用旧逻辑按 member 判断。
+            if (typeName.contains("MEMBERADD") || (typeName.isBlank() && !member.isNullOrBlank())) {
+                member?.let { return "$it 加入了群聊" }
+            }
+            when {
+                typeName.contains("DISBAND") || typeName.contains("BERECYCLED") -> return "该群已被解散"
+                typeName.contains("QUITTED") -> return if (member != null) "$member 退出了群聊" else "你已退出群聊"
+                typeName.contains("CREATED") -> return "群聊已创建"
+                typeName.contains("GROUPNAMEMODIFIED") -> return when {
+                    !groupName.isNullOrBlank() -> "群名称已修改为「$groupName」"
+                    else -> "群名称已修改"
+                }
+                typeName.contains("SHUTUP") -> {
+                    val shutUp = invokeGetter(group, "getShutUp")
+                    val target = shutUp?.let { invokeGetter(it, "getMember") }
+                        ?.let { invokeGetter(it, "getNick") as? String }
+                        ?.takeIf { it.isNotBlank() }
+                    val duration = (shutUp?.let { invokeGetter(it, "getDuration") } as? Number)?.toLong() ?: 0L
+                    val seconds = duration / 1000L
+                    return when {
+                        !target.isNullOrBlank() && seconds > 0 -> "$target 被禁言 ${seconds / 60} 分钟"
+                        !target.isNullOrBlank() -> "$target 被禁言"
+                        else -> "群成员被禁言"
+                    }
+                }
+                typeName.contains("BLOCK") -> return "有成员被移出群聊"
+                else -> {
+                    member?.let { return "$it 更新了群资料" }
+                    admin?.let { return "管理员 $it 更新了群资料" }
+                }
+            }
+        }
+        // 7) 本地灰条（如「以上为验证消息」）：extraJson 里通常带 text/content/wording。
+        val local = invokeGetter(gray, "getLocalGrayTipElement")
+        if (local != null) {
+            val extra = invokeGetter(local, "getExtraJson") as? String
+            extra?.takeIf { it.isNotBlank() }?.let { raw ->
+                val text = runCatching {
+                    val jsonObj = org.json.JSONObject(raw)
+                    listOf("text", "content", "wording", "summary", "tip")
+                        .firstNotNullOfOrNull { key -> jsonObj.optString(key).takeIf { it.isNotBlank() } }
+                }.getOrNull()
+                if (!text.isNullOrBlank()) return text
+                return raw.take(200)
             }
         }
         // 8) 其他可读灰条字段兜底
@@ -9017,6 +9131,45 @@ internal object TimBridge {
         if (invokeGetter(gray, "getEssenceElement") != null) return "该消息已被设为精华"
         if (invokeGetter(gray, "getProclamationElement") != null) return "群公告已更新"
         return "[系统消息]"
+    }
+
+    /** 调用 TIM 自己的灰条解码器；XML/本地灰条会返回「暂时不支持」文本，调用方继续兜底。 */
+    private fun decodeGrayTipWithTim(gray: Any): String? = runCatching {
+        val cl = hostClassLoader() ?: return@runCatching null
+        val util = Class.forName("com.tencent.qqnt.graytips.msglist.GrayTipsContentUtilKt", false, cl)
+        val elementClass = Class.forName(
+            "com.tencent.qqnt.kernelpublic.nativeinterface.GrayTipElement",
+            false,
+            cl,
+        )
+        val method = util.getMethod("c", elementClass)
+        (method.invoke(null, gray) as? CharSequence)?.toString()?.trim()
+    }.getOrNull()?.takeIf { text ->
+        text.isNotBlank() && !text.contains("不支持") && !text.contains("UnSupport")
+    }
+
+    /** 从 XML 灰条的 content 中提取可读文案（属性 txt/text/summary/content，其次去标签）。 */
+    private fun xmlGrayText(content: String?): String? {
+        if (content.isNullOrBlank()) return null
+        val attrs = Regex(
+            "(?:txt|text|summary|content|title|wording)\\s*=\\s*[\"']([^\"']{1,200})[\"']",
+        ).findAll(content)
+            .map { it.groupValues[1].trim() }
+            .filter { it.isNotBlank() && !it.startsWith("http") && !it.startsWith("mqq") }
+            .distinct()
+            .toList()
+        if (attrs.isNotEmpty()) return attrs.joinToString("").take(200)
+        // 没有可读属性：去掉标签/实体，作为最后兜底。
+        val plain = content
+            .replace(Regex("<[^>]+>"), " ")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return plain.takeIf { it.isNotBlank() && !it.startsWith("http") }?.take(200)
     }
 
     private class ReplyInfo(
@@ -9474,6 +9627,7 @@ internal object TimBridge {
         if (parts.size == 1) {
             // 单元素消息：与原 describeElements 输出保持一致（不引入 parts 渲染路径）。
             val part = parts[0]
+            if (part.isSystemFace) return describeElements(elements, msgId) to emptyList()
             return when (part.kind) {
                 ChatPartKind.TEXT -> ElementInfo(ChatMessageType.TEXT, part.text)
                 ChatPartKind.IMAGE -> ElementInfo(
@@ -9627,7 +9781,6 @@ internal object TimBridge {
                     val path = pttPath?.takeIf { pathUsable(it) }
                         ?: listOfNotNull(pttMd5, pttUuid, pttName)
                             .firstNotNullOfOrNull { key ->
-            if (part.isSystemFace) return describeElements(elements, msgId) to emptyList()
                                 sentVoiceLocalPaths[key]?.takeIf { pathUsable(it) }
                             }
                         ?: downloadedMediaByElement[pttElementId]?.takeIf { pathUsable(it) }
@@ -9702,20 +9855,6 @@ internal object TimBridge {
                 ELEMENT_TYPE_MARKET_FACE -> return describeMarketFaceElement(element, msgId)
 
                 ELEMENT_TYPE_FACE -> {
-        // 7) 本地灰条（如「以上为验证消息」）：extraJson 里通常带 text/content/wording。
-        val local = invokeGetter(gray, "getLocalGrayTipElement")
-        if (local != null) {
-            val extra = invokeGetter(local, "getExtraJson") as? String
-            extra?.takeIf { it.isNotBlank() }?.let { raw ->
-                val text = runCatching {
-                    val jsonObj = org.json.JSONObject(raw)
-                    listOf("text", "content", "wording", "summary", "tip")
-                        .firstNotNullOfOrNull { key -> jsonObj.optString(key).takeIf { it.isNotBlank() } }
-                }.getOrNull()
-                if (!text.isNullOrBlank()) return text
-                return raw.take(200)
-            }
-        }
                     val face = invokeGetter(element, "getFaceElement")
                     val faceText = (face?.let { invokeGetter(it, "getFaceText") } as? String).orEmpty()
                     val faceElementId = (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L
@@ -9726,45 +9865,6 @@ internal object TimBridge {
                         val resultId = (face?.let { invokeGetter(it, "getResultId") } as? String).orEmpty()
                         val surpriseId = (face?.let { invokeGetter(it, "getSurpriseId") } as? String).orEmpty()
                         val info = timSuperEmojiInfo(faceIndex)
-    /** 调用 TIM 自己的灰条解码器；XML/本地灰条会返回「暂时不支持」文本，调用方继续兜底。 */
-    private fun decodeGrayTipWithTim(gray: Any): String? = runCatching {
-        val cl = hostClassLoader() ?: return@runCatching null
-        val util = Class.forName("com.tencent.qqnt.graytips.msglist.GrayTipsContentUtilKt", false, cl)
-        val elementClass = Class.forName(
-            "com.tencent.qqnt.kernelpublic.nativeinterface.GrayTipElement",
-            false,
-            cl,
-        )
-        val method = util.getMethod("c", elementClass)
-        (method.invoke(null, gray) as? CharSequence)?.toString()?.trim()
-    }.getOrNull()?.takeIf { text ->
-        text.isNotBlank() && !text.contains("不支持") && !text.contains("UnSupport")
-    }
-
-    /** 从 XML 灰条的 content 中提取可读文案（属性 txt/text/summary/content，其次去标签）。 */
-    private fun xmlGrayText(content: String?): String? {
-        if (content.isNullOrBlank()) return null
-        val attrs = Regex(
-            "(?:txt|text|summary|content|title|wording)\\s*=\\s*[\"']([^\"']{1,200})[\"']",
-        ).findAll(content)
-            .map { it.groupValues[1].trim() }
-            .filter { it.isNotBlank() && !it.startsWith("http") && !it.startsWith("mqq") }
-            .distinct()
-            .toList()
-        if (attrs.isNotEmpty()) return attrs.joinToString("").take(200)
-        // 没有可读属性：去掉标签/实体，作为最后兜底。
-        val plain = content
-            .replace(Regex("<[^>]+>"), " ")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&amp;", "&")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        return plain.takeIf { it.isNotBlank() && !it.startsWith("http") }?.take(200)
-    }
-
                         val (lottiePath, imagePath) = superEmojiAssetPaths(
                             serverId = faceIndex,
                             packId = packId.ifBlank { info?.packId.orEmpty() },
@@ -9854,17 +9954,6 @@ internal object TimBridge {
                     // Bot/机器人 Markdown 消息：按纯文本展示（去掉常见 Markdown 标记）。
                     val md = invokeGetter(element, "getMarkdownElement")
                     val raw = (md?.let { invokeGetter(it, "getContent") } as? String).orEmpty()
-                ELEMENT_TYPE_FACE -> {
-                    val face = invokeGetter(element, "getFaceElement")
-                    val faceText = (face?.let { invokeGetter(it, "getFaceText") } as? String).orEmpty()
-                    val faceElementId = (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L
-                    if (isSuperEmojiFace(face)) {
-                        val faceIndex = (face?.let { invokeGetter(it, "getFaceIndex") } as? Number)?.toInt() ?: 0
-                        val packId = (face?.let { invokeGetter(it, "getPackId") } as? String).orEmpty()
-                        val stickerId = (face?.let { invokeGetter(it, "getStickerId") } as? String).orEmpty()
-                        val resultId = (face?.let { invokeGetter(it, "getResultId") } as? String).orEmpty()
-                        val surpriseId = (face?.let { invokeGetter(it, "getSurpriseId") } as? String).orEmpty()
-                        val info = timSuperEmojiInfo(faceIndex)
                     val plain = raw
                         .replace(Regex("```[\\s\\S]*?```"), "")
                         .replace(Regex("[#>*_`~]"), "")
@@ -10608,6 +10697,13 @@ internal object TimBridge {
     private const val ELEMENT_TYPE_FACE = 6
     private const val ELEMENT_TYPE_GRAY_TIP = 8
     private const val ELEMENT_TYPE_MARKET_FACE = 11
+    private const val ELEMENT_TYPE_MARKDOWN = 14
+    private const val ELEMENT_TYPE_MULTI_FORWARD = 16
+    private const val ELEMENT_TYPE_AV_RECORD = 21
+    private const val ELEMENT_TYPE_ONLINE_FILE = 23
+    private const val ELEMENT_TYPE_TOFU_RECORD = 26
+    private const val ELEMENT_TYPE_FACE_BUBBLE = 27
+    private const val ELEMENT_TYPE_SHARE_LOCATION = 28
     private const val ELEMENT_TYPE_WALLET = 9
     private const val ELEMENT_TYPE_ARK = 10
 
@@ -11301,13 +11397,6 @@ internal object TimBridge {
     /** 群成员快路径：缓存优先；缺失/过期时后台 getAllMemberListV2 刷新（emit DataUpdate.MEMBERS）。 */
     private fun groupMembersFast(groupCode: Long): List<ChatMember> {
         if (groupCode == 0L) return emptyList()
-    private const val ELEMENT_TYPE_MARKDOWN = 14
-    private const val ELEMENT_TYPE_MULTI_FORWARD = 16
-    private const val ELEMENT_TYPE_AV_RECORD = 21
-    private const val ELEMENT_TYPE_ONLINE_FILE = 23
-    private const val ELEMENT_TYPE_TOFU_RECORD = 26
-    private const val ELEMENT_TYPE_FACE_BUBBLE = 27
-    private const val ELEMENT_TYPE_SHARE_LOCATION = 28
         val cached = groupMembersCache[groupCode]
         if (cached == null || perfUptime() - cached.at >= GROUP_MEMBERS_CACHE_TTL_MS) {
             scheduleGroupMembersRefresh(groupCode)
@@ -14359,6 +14448,10 @@ internal object TimBridge {
                 .sortedWith(
                     compareBy({ it.state != FriendRequestState.PENDING }, { -it.timeMillis }),
                 )
+                .distinctBy { req ->
+                    val who = req.uid.ifBlank { req.uin.ifBlank { req.id } }.lowercase()
+                    "${req.isIncoming}:$who"
+                }
             val incoming = merged.count { it.isIncoming }
             Log.i(
                 TAG,
@@ -14448,10 +14541,6 @@ internal object TimBridge {
                     subType = msgNested?.let { runCatching { pbInt(it, "sub_type") }.getOrDefault(-1) } ?: -1,
                     actionCount = actionCount,
                     msgTime = runCatching { pbLong(structMsg, "msg_time") }.getOrDefault(0L),
-                .distinctBy { req ->
-                    val who = req.uid.ifBlank { req.uin.ifBlank { req.id } }.lowercase()
-                    "${req.isIncoming}:$who"
-                }
                 ),
             )
         }
@@ -15935,6 +16024,11 @@ internal object TimBridge {
             ChatMessageType.SYSTEM -> message.content
             ChatMessageType.CHAT_RECORD -> "[聊天记录]"
             ChatMessageType.ARK -> "[卡片]"
+            ChatMessageType.CALL -> message.content.ifBlank {
+                if (message.callVideo) "[视频通话]" else "[语音通话]"
+            }
+            ChatMessageType.SUPER_EMOJI -> "[超级表情]"
+            ChatMessageType.SYS_FACE -> message.content.ifBlank { "[表情]" }
         }
         return raw.replace('\n', ' ').trim().take(60)
     }
@@ -16712,11 +16806,6 @@ internal object TimBridge {
     // 加好友 / 加群 / 扫一扫 / 创建群聊（QRoute 原生页 + 内核请求）
     // ---------------------------------------------------------------------
 
-            ChatMessageType.CALL -> message.content.ifBlank {
-                if (message.callVideo) "[视频通话]" else "[语音通话]"
-            }
-            ChatMessageType.SUPER_EMOJI -> "[超级表情]"
-            ChatMessageType.SYS_FACE -> message.content.ifBlank { "[表情]" }
     /** 加好友来源：3017=条件查找（与 TIM「搜索结果点加好友」同款参数）。 */
     private const val ADD_FRIEND_SOURCE_ID = 3017
     private const val ADD_FRIEND_SOURCE_SUB_ID = 1
@@ -19482,10 +19571,120 @@ internal object TimBridge {
     }
 
     /**
+     * 搜索群文件：走 TIM 自己的群文件搜索协议
+     * `GroupFileAppSvr.GetFileSearch`（SSO + tencent.im.cs.cmd0x383 ReqBody.msg_file_search_req_body），
+     * 与 TIM 原版 TroopFileSearchEngine 完全一致；结果只含文件（不含文件夹）。
+     */
+    fun searchGroupFiles(chatId: String, keyword: String, count: Int = 50): List<GroupFileEntry>? {
+        if (!isHost || keyword.isBlank()) return null
+        val groupCode = groupCodeFor(chatId)?.also {
+            Log.i(TAG, "groupFile: search chat=$chatId group=$it keyword=${keyword.take(30)}")
+        } ?: run {
+            Log.w(TAG, "groupFile: search failed (not a group / no groupCode) chat=$chatId")
+            return null
+        }
+        return try {
+            val req = newPb("tencent.im.cs.cmd0x383.cmd0x383\$ReqBody") ?: run {
+                Log.w(TAG, "groupFile: search req class missing")
+                return null
+            }
+            pbSet(req, "uint64_groupcode", groupCode)
+            pbSet(req, "uint32_app_id", 3)
+            val searchReq = pbMessage(req, "msg_file_search_req_body") ?: run {
+                Log.w(TAG, "groupFile: search req sub message missing")
+                return null
+            }
+            pbSet(
+                searchReq,
+                "bytes_key_word",
+                pbByteStringOf(keyword.toByteArray(Charsets.UTF_8)),
+            )
+            pbSet(searchReq, "uint32_count", count.coerceIn(1, 100))
+            pbSet(searchReq, "uint32_search_type", 0) // SEARCH_BY_KEY_WORD
+            pbSet(searchReq, "uint32_file_type", 0)
+            // 子消息必须显式置 hasFlag，否则 ReqBody 序列化时会被跳过。
+            pbSetHasFlag(searchReq, true)
+            val body = pbBytesOf(req) ?: run {
+                Log.w(TAG, "groupFile: search encode req failed")
+                return null
+            }
+            Log.i(TAG, "groupFile: search req bytes=${body.size} hex=${hexLowerPrefix(body, 32)}")
+            val raw = sendRawProtoRequest("GroupFileAppSvr.GetFileSearch", body, timeoutMs = 8_000L)
+                ?: run {
+                    Log.w(TAG, "groupFile: search send failed")
+                    return null
+                }
+            val rsp = pbParse("tencent.im.cs.cmd0x383.cmd0x383\$RspBody", raw) ?: run {
+                Log.w(TAG, "groupFile: search parse rsp failed")
+                return null
+            }
+            val ret = pbInt(rsp, "int32_ret_code")
+            val retMsg = pbString(rsp, "str_ret_msg")
+            val rspBody = pbMessage(rsp, "msg_file_search_rsp_body")
+            val total = rspBody?.let { pbInt(it, "uint32_total_match_count") } ?: 0
+            val rawItems = rspBody?.let { pbRepeatMessages(it, "item_list") }.orEmpty()
+            Log.i(
+                TAG,
+                "groupFile: search rsp ret=$ret msg=${retMsg.take(100)} " +
+                    "total=$total items=${rawItems.size} bytes=${raw.size}",
+            )
+            if (ret != 0) return emptyList()
+            rawItems.mapNotNull { item ->
+                item ?: return@mapNotNull null
+                val fileInfo = pbMessage(item, "file_info") ?: return@mapNotNull null
+                val fileId = pbString(fileInfo, "str_file_path")
+                val name = pbString(fileInfo, "str_file_name")
+                if (fileId.isBlank() && name.isBlank()) return@mapNotNull null
+                GroupFileEntry(
+                    fileId = fileId,
+                    parentFolderId = "",
+                    name = name,
+                    isFolder = false,
+                    fileSize = pbLong(fileInfo, "uint64_file_size"),
+                    uploaderName = byteStringBytes(
+                        pbByteString(item, "bytes_uploader_nick_name"),
+                    )?.toString(Charsets.UTF_8).orEmpty(),
+                    uploadTime = pbLong(fileInfo, "uint32_upload_time"),
+                    downloadTimes = pbInt(fileInfo, "uint32_download_times"),
+                    localPath = pbString(fileInfo, "str_local_path").takeIf { it.isNotBlank() },
+                    md5 = pbBytes(fileInfo, "bytes_md5")?.let { hexLower(it) }.orEmpty(),
+                    busId = pbInt(fileInfo, "uint32_bus_id"),
+                    deadTime = pbInt(fileInfo, "uint32_dead_time"),
+                )
+            }.sortedByDescending { it.uploadTime }
+        } catch (t: Throwable) {
+            Log.w(
+                TAG,
+                "groupFile: search failed keyword=${keyword.take(30)}: " +
+                    "${t.javaClass.simpleName} ${t.message}",
+            )
+            null
+        }
+    }
+
+    /**
      * 列群文件/文件夹（旧版 OIDB 0x6d8_1，command 1752 / service 1）：
      * req oidb_0x6d8$ReqBody.file_list_info_req；rsp file_list_info_rsp（rpt_item_list /
      * is_end / next_index / all_file_count / uint32_role）。Item.uint32_type：TIM 源码确认 1=文件、2=文件夹。
      */
+    /** 目录 id 归一化：空 / "/" 都视为根目录。 */
+    private fun groupFolderKey(folderId: String): String =
+        folderId.ifBlank { "/" }
+
+    /**
+     * 判断一批条目是否真的属于请求的目录：
+     * TIM 的部分 filter/reqFrom 组合在文件夹为空时会忽略 folderId 返回**根目录/父目录**内容，
+     * 必须过滤掉，否则空文件夹会显示上层目录的其它文件。
+     */
+    private fun entriesBelongToFolder(
+        entries: List<GroupFileEntry>,
+        requestedFolderId: String,
+    ): Boolean {
+        if (entries.isEmpty()) return true
+        val requested = groupFolderKey(requestedFolderId)
+        return entries.all { groupFolderKey(it.parentFolderId) == requested }
+    }
+
     fun listGroupFiles(
         chatId: String,
         parentFolderId: String,
@@ -19540,6 +19739,14 @@ internal object TimBridge {
                     continue
                 }
                 val entries = mapOidbListEntries(data, parentFolderId)
+                if (!entriesBelongToFolder(entries, parentFolderId)) {
+                    Log.i(
+                        TAG,
+                        "groupFile: list try filter=$filterCode reqFrom=$reqFrom " +
+                            "returned wrong folder (items=${entries.size}) -> skip",
+                    )
+                    continue
+                }
                 val folders = entries.count { it.isFolder }
                 val files = entries.size - folders
                 Log.i(
@@ -19584,6 +19791,8 @@ internal object TimBridge {
                 )
                 if (paged != null && paged.retCode == 0) {
                     val entries2 = mapOidbListEntries(paged, parentFolderId)
+                        .takeIf { entriesBelongToFolder(it, parentFolderId) }
+                        .orEmpty()
                     val folders2 = entries2.count { it.isFolder }
                     val files2 = entries2.size - folders2
                     Log.i(
@@ -19623,6 +19832,8 @@ internal object TimBridge {
                 )
                 if (extra != null && extra.retCode == 0) {
                     val entries3 = mapOidbListEntries(extra, parentFolderId)
+                        .takeIf { entriesBelongToFolder(it, parentFolderId) }
+                        .orEmpty()
                     val folders3 = entries3.count { it.isFolder }
                     val files3 = entries3.size - folders3
                     Log.i(
@@ -19638,9 +19849,18 @@ internal object TimBridge {
                     }
                 }
             }
+            Log.i(
+                TAG,
+                "groupFile: list folder=${requestFolderId} group=$groupCode " +
+                    "entries=${bestEntries.size}",
+            )
             val finalData = best ?: run {
                 Log.w(TAG, "groupFile: list failed (no valid attempt, tried=$tried lastError=$lastError)")
                 return GroupFilePage(error = "list failed: $lastError")
+            }
+            // 最后再兜底过滤一次：绝不让其它目录的内容混进当前目录。
+            val safeBestEntries = bestEntries.filter {
+                groupFolderKey(it.parentFolderId) == groupFolderKey(parentFolderId)
             }
             groupFileRoleByGroup[groupCode] = finalData.role
             // 最终生效参数（Lead 要求）
@@ -19659,7 +19879,7 @@ internal object TimBridge {
                 )
             }
             GroupFilePage(
-                entries = bestEntries,
+                entries = safeBestEntries,
                 isEnd = finalData.isEnd,
                 nextIndex = finalData.nextIndex,
                 allFileCount = finalData.allFileCount,
@@ -19670,24 +19890,6 @@ internal object TimBridge {
             GroupFilePage(error = "list failed: ${t.javaClass.simpleName} ${t.message}")
         }
     }
-    /** 目录 id 归一化：空 / "/" 都视为根目录。 */
-    private fun groupFolderKey(folderId: String): String =
-        folderId.ifBlank { "/" }
-
-    /**
-     * 判断一批条目是否真的属于请求的目录：
-     * TIM 的部分 filter/reqFrom 组合在文件夹为空时会忽略 folderId 返回**根目录/父目录**内容，
-     * 必须过滤掉，否则空文件夹会显示上层目录的其它文件。
-     */
-    private fun entriesBelongToFolder(
-        entries: List<GroupFileEntry>,
-        requestedFolderId: String,
-    ): Boolean {
-        if (entries.isEmpty()) return true
-        val requested = groupFolderKey(requestedFolderId)
-        return entries.all { groupFolderKey(it.parentFolderId) == requested }
-    }
-
 
     /** 群文件管理权限：沿用群成员信息（群主/管理员）判定；列表 rsp 的 role 仅打日志辅助核对。 */
     fun canManageGroupFiles(chatId: String): Boolean {
@@ -19742,14 +19944,6 @@ internal object TimBridge {
         if (info == null || groupFileDownloadStates.isEmpty()) return
         val fileId = (invokeGetter(info, "getFileId") as? String).orEmpty()
         val fileModelId = (invokeGetter(info, "getFileModelId") as? Number)?.toLong() ?: 0L
-                if (!entriesBelongToFolder(entries, parentFolderId)) {
-                    Log.i(
-                        TAG,
-                        "groupFile: list try filter=$filterCode reqFrom=$reqFrom " +
-                            "returned wrong folder (items=${entries.size}) -> skip",
-                    )
-                    continue
-                }
         if (fileId.isBlank() && fileModelId == 0L) return
         val state = findGroupFileDownloadState(fileId, fileModelId) ?: return
         val progressRaw = (invokeGetter(info, "getFileProgress") as? Number)?.toLong() ?: 0L
@@ -19794,8 +19988,6 @@ internal object TimBridge {
                         "pct=$pct progress=$progressRaw total=$totalSize status=$status",
                 )
             }
-                        .takeIf { entriesBelongToFolder(it, parentFolderId) }
-                        .orEmpty()
         }
     }
 
@@ -19835,8 +20027,6 @@ internal object TimBridge {
             if (code !in 200..299) {
                 Log.w(TAG, "groupFile: download http status=$code url=${url.take(200)}")
                 connection.disconnect()
-                        .takeIf { entriesBelongToFolder(it, parentFolderId) }
-                        .orEmpty()
                 return null
             }
             val contentLength = connection.contentLengthLong.takeIf { it > 0L } ?: 0L
@@ -19852,11 +20042,6 @@ internal object TimBridge {
                         output.write(buffer, 0, read)
                         downloaded += read
                         val pct = if (totalSize > 0L) {
-            Log.i(
-                TAG,
-                "groupFile: list folder=${requestFolderId} group=$groupCode " +
-                    "entries=${bestEntries.size}",
-            )
                             (downloaded * 100L / totalSize).toInt().coerceIn(0, 100)
                         } else {
                             0
@@ -20293,98 +20478,6 @@ internal object TimBridge {
             pbSet(nested, "uint64_group_code", groupCode)
             pbSet(nested, "uint32_app_id", 3)
             pbSet(nested, "uint32_bus_id", 102) // 102 = 群文件 busId（0 会被服务端判 param error: bus_id）
-    /**
-     * 搜索群文件：走 TIM 自己的群文件搜索协议
-     * `GroupFileAppSvr.GetFileSearch`（SSO + tencent.im.cs.cmd0x383 ReqBody.msg_file_search_req_body），
-     * 与 TIM 原版 TroopFileSearchEngine 完全一致；结果只含文件（不含文件夹）。
-     */
-    fun searchGroupFiles(chatId: String, keyword: String, count: Int = 50): List<GroupFileEntry>? {
-        if (!isHost || keyword.isBlank()) return null
-        val groupCode = groupCodeFor(chatId)?.also {
-            Log.i(TAG, "groupFile: search chat=$chatId group=$it keyword=${keyword.take(30)}")
-        } ?: run {
-            Log.w(TAG, "groupFile: search failed (not a group / no groupCode) chat=$chatId")
-            return null
-        }
-        return try {
-            val req = newPb("tencent.im.cs.cmd0x383.cmd0x383\$ReqBody") ?: run {
-                Log.w(TAG, "groupFile: search req class missing")
-                return null
-            }
-            pbSet(req, "uint64_groupcode", groupCode)
-            pbSet(req, "uint32_app_id", 3)
-            val searchReq = pbMessage(req, "msg_file_search_req_body") ?: run {
-                Log.w(TAG, "groupFile: search req sub message missing")
-                return null
-            }
-            pbSet(
-                searchReq,
-                "bytes_key_word",
-                pbByteStringOf(keyword.toByteArray(Charsets.UTF_8)),
-            )
-            pbSet(searchReq, "uint32_count", count.coerceIn(1, 100))
-            pbSet(searchReq, "uint32_search_type", 0) // SEARCH_BY_KEY_WORD
-            pbSet(searchReq, "uint32_file_type", 0)
-            // 子消息必须显式置 hasFlag，否则 ReqBody 序列化时会被跳过。
-            pbSetHasFlag(searchReq, true)
-            val body = pbBytesOf(req) ?: run {
-                Log.w(TAG, "groupFile: search encode req failed")
-                return null
-            }
-            Log.i(TAG, "groupFile: search req bytes=${body.size} hex=${hexLowerPrefix(body, 32)}")
-            val raw = sendRawProtoRequest("GroupFileAppSvr.GetFileSearch", body, timeoutMs = 8_000L)
-                ?: run {
-                    Log.w(TAG, "groupFile: search send failed")
-                    return null
-                }
-            val rsp = pbParse("tencent.im.cs.cmd0x383.cmd0x383\$RspBody", raw) ?: run {
-                Log.w(TAG, "groupFile: search parse rsp failed")
-                return null
-            }
-            val ret = pbInt(rsp, "int32_ret_code")
-            val retMsg = pbString(rsp, "str_ret_msg")
-            val rspBody = pbMessage(rsp, "msg_file_search_rsp_body")
-            val total = rspBody?.let { pbInt(it, "uint32_total_match_count") } ?: 0
-            val rawItems = rspBody?.let { pbRepeatMessages(it, "item_list") }.orEmpty()
-            Log.i(
-                TAG,
-                "groupFile: search rsp ret=$ret msg=${retMsg.take(100)} " +
-                    "total=$total items=${rawItems.size} bytes=${raw.size}",
-            )
-            if (ret != 0) return emptyList()
-            rawItems.mapNotNull { item ->
-                item ?: return@mapNotNull null
-                val fileInfo = pbMessage(item, "file_info") ?: return@mapNotNull null
-                val fileId = pbString(fileInfo, "str_file_path")
-                val name = pbString(fileInfo, "str_file_name")
-                if (fileId.isBlank() && name.isBlank()) return@mapNotNull null
-                GroupFileEntry(
-                    fileId = fileId,
-                    parentFolderId = "",
-                    name = name,
-                    isFolder = false,
-                    fileSize = pbLong(fileInfo, "uint64_file_size"),
-                    uploaderName = byteStringBytes(
-                        pbByteString(item, "bytes_uploader_nick_name"),
-                    )?.toString(Charsets.UTF_8).orEmpty(),
-                    uploadTime = pbLong(fileInfo, "uint32_upload_time"),
-                    downloadTimes = pbInt(fileInfo, "uint32_download_times"),
-                    localPath = pbString(fileInfo, "str_local_path").takeIf { it.isNotBlank() },
-                    md5 = pbBytes(fileInfo, "bytes_md5")?.let { hexLower(it) }.orEmpty(),
-                    busId = pbInt(fileInfo, "uint32_bus_id"),
-                    deadTime = pbInt(fileInfo, "uint32_dead_time"),
-                )
-            }.sortedByDescending { it.uploadTime }
-        } catch (t: Throwable) {
-            Log.w(
-                TAG,
-                "groupFile: search failed keyword=${keyword.take(30)}: " +
-                    "${t.javaClass.simpleName} ${t.message}",
-            )
-            null
-        }
-    }
-
             pbSet(nested, "uint32_entrance", 4) // 4=文件页上传（AIO 是 5）
             pbSet(nested, "str_parent_folder_id", parentFolderId.ifBlank { "/" })
             pbSet(nested, "str_file_name", displayName)
@@ -22037,6 +22130,12 @@ internal class TimGroupFileSource : GroupFileSource {
     override fun canManageGroupFiles(chatId: String): Boolean =
         TimBridge.canManageGroupFiles(chatId)
 
+    override fun searchGroupFiles(
+        chatId: String,
+        keyword: String,
+        count: Int,
+    ): List<GroupFileEntry>? = TimBridge.searchGroupFiles(chatId, keyword, count)
+
     override fun listGroupFiles(
         chatId: String,
         parentFolderId: String,
@@ -22133,12 +22232,6 @@ internal class TimChatSource : ChatSource {
 internal class TimContactSource : ContactSource {
     override fun loadContacts(): List<ContactItem>? = TimBridge.loadContacts()
 
-    override fun searchGroupFiles(
-        chatId: String,
-        keyword: String,
-        count: Int,
-    ): List<GroupFileEntry>? = TimBridge.searchGroupFiles(chatId, keyword, count)
-
     override fun loadContactDetail(contactId: String): ContactDetail? =
         TimBridge.loadContactDetail(contactId)
 
@@ -22148,6 +22241,10 @@ internal class TimContactSource : ContactSource {
 
 /** 宿主里的真实收藏表情数据源。 */
 internal class TimEmojiSource : EmojiSource {
+    override fun loadSuperEmojis(): List<SuperEmojiItem>? = TimBridge.loadSuperEmojis()
+
+    override fun loadSystemFaces(): List<SystemFaceItem>? = TimBridge.loadSystemFaces()
+
     override fun loadFavoriteEmojis(): List<CustomEmoji>? = TimBridge.loadFavoriteEmojis()
 
     override fun refreshFavoriteEmojis(): List<CustomEmoji>? = TimBridge.refreshFavoriteEmojis()
@@ -22271,6 +22368,25 @@ internal class TimGroupCreateSource : GroupCreateSource {
 
 /** 宿主里的真实消息数据源。 */
 internal class TimMessageSource : MessageSource {
+    override fun sendSuperEmoji(
+        chatId: String,
+        serverId: Int,
+        desc: String,
+        packId: String,
+        stickerId: String,
+        stickerType: Int,
+    ): Boolean = TimBridge.sendSuperEmoji(
+        chatId,
+        serverId,
+        desc,
+        packId,
+        stickerId,
+        stickerType,
+    )
+
+    override fun sendSystemFace(chatId: String, serverId: Int, desc: String): Boolean =
+        TimBridge.sendSystemFace(chatId, serverId, desc)
+
     override fun loadMessages(chatId: String): List<ChatMessage>? = TimBridge.loadMessages(chatId)
 
     override fun loadOlderMessages(chatId: String, count: Int): List<ChatMessage>? =
@@ -22284,10 +22400,6 @@ internal class TimMessageSource : MessageSource {
 
     override fun loadHistoryAround(chatId: String, seq: Long, count: Int): List<ChatMessage>? =
         TimBridge.loadHistoryAround(chatId, seq, count)
-
-    override fun loadSuperEmojis(): List<SuperEmojiItem>? = TimBridge.loadSuperEmojis()
-
-    override fun loadSystemFaces(): List<SystemFaceItem>? = TimBridge.loadSystemFaces()
 
     override fun sendText(chatId: String, text: String): Boolean = TimBridge.sendTextMessage(chatId, text)
 
@@ -22412,25 +22524,6 @@ internal class TimMessageSource : MessageSource {
         text = text,
         atTargets = atTargets,
         replyToMsgId = replyToMsgId,
-    override fun sendSuperEmoji(
-        chatId: String,
-        serverId: Int,
-        desc: String,
-        packId: String,
-        stickerId: String,
-        stickerType: Int,
-    ): Boolean = TimBridge.sendSuperEmoji(
-        chatId,
-        serverId,
-        desc,
-        packId,
-        stickerId,
-        stickerType,
-    )
-
-    override fun sendSystemFace(chatId: String, serverId: Int, desc: String): Boolean =
-        TimBridge.sendSystemFace(chatId, serverId, desc)
-
         replySenderUid = replySenderUid,
         replySourceText = replySourceText,
     )

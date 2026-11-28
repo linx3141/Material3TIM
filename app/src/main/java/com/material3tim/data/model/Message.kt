@@ -109,6 +109,8 @@ data class ChatMessage(
     val chatRecordElementId: Long = 0,
     /** 聊天记录气泡：消息条数 */
     val chatRecordCount: Int = 0,
+    /** 通话记录：true=视频通话，false=语音通话 */
+    val callVideo: Boolean = false,
     /** 视频消息：时长（秒） */
     val videoSeconds: Int = 0,
     /** 视频消息：缩略图本地路径 */
@@ -130,8 +132,6 @@ data class ChatMessage(
     /** 引用消息：被引用消息的 seq（msgId 缺失时用于从内核补拉/定位） */
     val replyToSeq: Long = 0L,
     /** 消息自身的 seq（用于按 seq 定位引用目标） */
-    /** 通话记录：true=视频通话，false=语音通话 */
-    val callVideo: Boolean = false,
     val seq: Long = 0L,
     /** 是否有引用（即使预览信息缺失也应该显示引用条） */
     val hasReply: Boolean = false,

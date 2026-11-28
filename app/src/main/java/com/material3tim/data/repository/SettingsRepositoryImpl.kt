@@ -72,10 +72,6 @@ class SettingsRepositoryImpl : SettingsRepository {
         get() = prefs.getBoolean("enable_navigation_badge", true)
         set(value) = prefs.edit { putBoolean("enable_navigation_badge", value) }
 
-    override var showTopAppBar: Boolean
-        get() = prefs.getBoolean("show_top_app_bar", true)
-        set(value) = prefs.edit { putBoolean("show_top_app_bar", value) }
-
     override var enableDoubleTapPlusOne: Boolean
         get() = prefs.getBoolean("enable_double_tap_plus_one", false)
         set(value) = prefs.edit { putBoolean("enable_double_tap_plus_one", value) }
@@ -83,6 +79,10 @@ class SettingsRepositoryImpl : SettingsRepository {
     override var showChatTopBarAvatar: Boolean
         get() = prefs.getBoolean("show_chat_top_bar_avatar", true)
         set(value) = prefs.edit { putBoolean("show_chat_top_bar_avatar", value) }
+
+    override var showTopAppBar: Boolean
+        get() = prefs.getBoolean("show_top_app_bar", true)
+        set(value) = prefs.edit { putBoolean("show_top_app_bar", value) }
 
     override var topAppBarStyle: Int
         get() = prefs.getInt("top_app_bar_style", 1)

@@ -32,8 +32,8 @@ import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.runtime.Composable
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -55,6 +55,7 @@ import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
@@ -163,8 +164,6 @@ fun SettingPagerMiuix(
                                 onClick = actions.onOpenTheme,
                             )
                         },
-                        CardItem("about") {
-                            ArrowPreference(
                         CardItem("doubleTapPlusOne") {
                             SwitchPreference(
                                 title = stringResource(R.string.settings_double_tap_plus_one),
@@ -197,6 +196,8 @@ fun SettingPagerMiuix(
                                 onCheckedChange = actions.onSetShowChatTopBarAvatar,
                             )
                         },
+                        CardItem("about") {
+                            ArrowPreference(
                                 title = stringResource(id = R.string.about),
                                 startAction = {
                                     Icon(
