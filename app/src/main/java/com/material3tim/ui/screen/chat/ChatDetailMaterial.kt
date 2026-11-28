@@ -80,6 +80,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -150,6 +152,9 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.material3tim.R
@@ -165,6 +170,8 @@ import com.material3tim.data.source.AtTarget
 import com.material3tim.data.model.ChatMessageType
 import com.material3tim.data.model.ChatPartKind
 import com.material3tim.ui.component.ChatAvatar
+import com.material3tim.data.model.SuperEmojiItem
+import com.material3tim.data.model.SystemFaceItem
 import com.material3tim.ui.component.ime.ChatImeController
 import com.material3tim.ui.component.ime.rememberKeyboardHeightDp
 import com.material3tim.ui.component.DraggableWavyProgressBar
@@ -236,6 +243,8 @@ internal fun ChatDetailMaterial(
     onAddToFavorite: (ChatMessage) -> Unit = {},
     onStartVoiceRecord: () -> Unit = {},
     initialMessagesLoaded: Boolean = true,
+    onSendSuperEmoji: (SuperEmojiItem) -> Unit = {},
+    onSendSystemFace: (SystemFaceItem) -> Unit = {},
     imeController: ChatImeController,
 ) {
     val context = LocalContext.current
@@ -771,6 +780,10 @@ internal fun ChatDetailMaterial(
                     },
                     onCameraAction = { isVideo ->
                         composer.closePanels()
+                    // 与点击 Unicode emoji 一致：把表情作为 `[描述]` 文本插入输入框，
+                    // 发送时由 bridge 解析成 FaceElement（不直接发出）。
+                    onSendSuperEmoji = { item -> composer.appendEmoji("[超级:${item.desc}]") },
+                    onSendSystemFace = { item -> composer.appendEmoji("[${item.desc}]") },
                         onCameraAction(isVideo)
                     },
                 )

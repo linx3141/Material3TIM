@@ -19,3 +19,6 @@
 -keep class com.material3tim.xposed.** { *; }
 -keep class io.github.libxposed.** { *; }
 -dontwarn io.github.libxposed.**
+
+# Lottie 依赖的 okio 引用了 javax.annotation.Nullable（仅编译期注解）
+-dontwarn javax.annotation.**

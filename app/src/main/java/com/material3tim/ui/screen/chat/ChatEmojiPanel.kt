@@ -77,7 +77,10 @@ import com.material3tim.ui.component.miuix.glass.LocalGlassMenu
 import com.material3tim.ui.component.miuix.glass.LocalPageBackdrop
 import com.material3tim.ui.component.miuix.glass.rememberPageBackdrop
 import com.material3tim.ui.component.AnimatedOrStaticImage
+import com.material3tim.ui.component.SuperEmojiAnimation
 import com.material3tim.data.model.CustomEmoji
+import com.material3tim.data.model.SuperEmojiItem
+import com.material3tim.data.model.SystemFaceItem
 import com.material3tim.data.model.StickerPack
 import com.material3tim.data.repository.EmojiRepository
 import com.material3tim.data.source.AppDataSources
@@ -130,6 +133,8 @@ internal fun searchStickerPacks(
 internal class EmojiPanelData(
     val favorites: List<CustomEmoji>,
     val packs: List<StickerPack>,
+    val superEmojis: List<SuperEmojiItem>,
+    val systemFaces: List<SystemFaceItem>,
     val favoritesLoading: Boolean,
     val packsLoading: Boolean,
     val refresh: () -> Unit,
@@ -140,6 +145,8 @@ internal fun rememberEmojiPanelData(): EmojiPanelData {
     val source = remember { AppDataSources.emojiSource }
     var favorites by remember { mutableStateOf<List<CustomEmoji>>(emptyList()) }
     var packs by remember { mutableStateOf<List<StickerPack>>(EmojiRepository.stickerPacks) }
+    var superEmojis by remember { mutableStateOf<List<SuperEmojiItem>>(emptyList()) }
+    var systemFaces by remember { mutableStateOf<List<SystemFaceItem>>(emptyList()) }
     var favoritesLoading by remember { mutableStateOf(false) }
     var packsLoading by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableIntStateOf(0) }
@@ -154,6 +161,12 @@ internal fun rememberEmojiPanelData(): EmojiPanelData {
         withContext(Dispatchers.IO) {
             source.loadStickerPacks()
         }?.let { packs = it }
+        withContext(Dispatchers.IO) {
+            runCatching { source.loadSuperEmojis() }.getOrNull()
+        }?.let { superEmojis = it }
+        withContext(Dispatchers.IO) {
+            runCatching { source.loadSystemFaces() }.getOrNull()
+        }?.let { systemFaces = it }
         favoritesLoading = false
         packsLoading = false
     }
@@ -176,6 +189,8 @@ internal fun rememberEmojiPanelData(): EmojiPanelData {
     return EmojiPanelData(
         favorites = favorites,
         packs = packs,
+        superEmojis = superEmojis,
+        systemFaces = systemFaces,
         favoritesLoading = favoritesLoading,
         packsLoading = packsLoading,
         refresh = { refreshTick += 1 },
@@ -320,6 +335,8 @@ internal fun ChatEmojiPanelMaterial(
     composer: ChatComposerState,
     onSendCustomEmoji: (CustomEmoji) -> Unit = {},
     onSendStickerPackEmoji: (packId: String, eId: String) -> Unit = { _, _ -> },
+    onSendSuperEmoji: (SuperEmojiItem) -> Unit = {},
+    onSendSystemFace: (SystemFaceItem) -> Unit = {},
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val context = LocalContext.current
@@ -391,6 +408,10 @@ internal fun ChatEmojiPanelMaterial(
             when (tab) {
                 ChatEmojiPanelTab.Emoji -> EmojiGridMaterial(
                     onEmojiClick = composer::appendEmoji,
+                    superEmojis = emojiData.superEmojis,
+                    onSuperEmojiClick = onSendSuperEmoji,
+                    systemFaces = emojiData.systemFaces,
+                    onSystemFaceClick = onSendSystemFace,
                     modifier = Modifier.weight(1f),
                 )
 
@@ -451,7 +472,14 @@ private fun EmojiTabRowMaterial(
 }
 
 @Composable
-private fun EmojiGridMaterial(onEmojiClick: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun EmojiGridMaterial(
+    onEmojiClick: (String) -> Unit,
+    superEmojis: List<SuperEmojiItem> = emptyList(),
+    onSuperEmojiClick: (SuperEmojiItem) -> Unit = {},
+    systemFaces: List<SystemFaceItem> = emptyList(),
+    onSystemFaceClick: (SystemFaceItem) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     val colorScheme = MaterialTheme.colorScheme
     LazyVerticalGrid(
         columns = GridCells.Fixed(8),
@@ -469,6 +497,41 @@ private fun EmojiGridMaterial(onEmojiClick: (String) -> Unit, modifier: Modifier
         ) { index ->
             EmojiCellMaterial(EmojiRepository.recentEmojis[index], onEmojiClick)
         }
+        // 超级表情放在「全部表情」之前，打开表情页更容易看到（TIM 原生也是单独一栏大表情）。
+        if (superEmojis.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                EmojiSectionTitleMaterial(
+                    text = stringResource(R.string.emoji_super_title),
+                    topPadding = 8.dp,
+                )
+            }
+            items(
+                count = superEmojis.size,
+                key = { index -> "super_${superEmojis[index].serverId}" },
+            ) { index ->
+                SuperEmojiCellMaterial(
+                    item = superEmojis[index],
+                    onClick = { onSuperEmojiClick(superEmojis[index]) },
+                )
+            }
+        }
+        if (systemFaces.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                EmojiSectionTitleMaterial(
+                    text = stringResource(R.string.emoji_system_face_title),
+                    topPadding = 8.dp,
+                )
+            }
+            items(
+                count = systemFaces.size,
+                key = { index -> "sysface_${systemFaces[index].serverId}" },
+            ) { index ->
+                SystemFaceCellMaterial(
+                    item = systemFaces[index],
+                    onClick = { onSystemFaceClick(systemFaces[index]) },
+                )
+            }
+        }
         item(span = { GridItemSpan(maxLineSpan) }) {
             EmojiSectionTitleMaterial(
                 text = stringResource(R.string.chat_v2_all_emoji_title),
@@ -481,6 +544,48 @@ private fun EmojiGridMaterial(onEmojiClick: (String) -> Unit, modifier: Modifier
         ) { index ->
             EmojiCellMaterial(EmojiRepository.emojis[index], onEmojiClick)
         }
+    }
+}
+
+/** 表情页「小黄脸」单元格：TIM 内置静态表情小图。 */
+@Composable
+private fun SystemFaceCellMaterial(item: SystemFaceItem, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        AnimatedOrStaticImage(
+            path = item.imagePath,
+            contentDescription = item.desc,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.size(32.dp),
+        )
+    }
+}
+
+/** 表情页「超级表情」单元格：面板内只显示静态首帧（避免几十个 Lottie 同时播放卡顿）。 */
+@Composable
+private fun SuperEmojiCellMaterial(item: SuperEmojiItem, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        SuperEmojiAnimation(
+            lottiePath = item.lottiePath,
+            imagePath = item.imagePath,
+            contentDescription = item.desc,
+            fallbackText = item.desc.take(1).ifBlank { "表" },
+            modifier = Modifier.size(34.dp),
+            animate = false,
+        )
     }
 }
 
@@ -1010,6 +1115,8 @@ internal fun ChatEmojiPanelMiuix(
     composer: ChatComposerState,
     onSendCustomEmoji: (CustomEmoji) -> Unit = {},
     onSendStickerPackEmoji: (packId: String, eId: String) -> Unit = { _, _ -> },
+    onSendSuperEmoji: (SuperEmojiItem) -> Unit = {},
+    onSendSystemFace: (SystemFaceItem) -> Unit = {},
 ) {
     var tab by rememberSaveable { mutableStateOf(ChatEmojiPanelTab.Stickers) }
     val tabs = ChatEmojiPanelTab.entries.map { stringResource(it.labelRes) }
@@ -1102,6 +1209,10 @@ internal fun ChatEmojiPanelMiuix(
             when (tab) {
                 ChatEmojiPanelTab.Emoji -> EmojiGridMiuix(
                     onEmojiClick = composer::appendEmoji,
+                    superEmojis = emojiData.superEmojis,
+                    onSuperEmojiClick = onSendSuperEmoji,
+                    systemFaces = emojiData.systemFaces,
+                    onSystemFaceClick = onSendSystemFace,
                     modifier = Modifier.weight(1f),
                 )
 
@@ -1300,7 +1411,14 @@ private fun StickerTabMiuix(
 }
 
 @Composable
-private fun EmojiGridMiuix(onEmojiClick: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun EmojiGridMiuix(
+    onEmojiClick: (String) -> Unit,
+    superEmojis: List<SuperEmojiItem> = emptyList(),
+    onSuperEmojiClick: (SuperEmojiItem) -> Unit = {},
+    systemFaces: List<SystemFaceItem> = emptyList(),
+    onSystemFaceClick: (SystemFaceItem) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(8),
         modifier = modifier.fillMaxWidth(),
@@ -1317,6 +1435,40 @@ private fun EmojiGridMiuix(onEmojiClick: (String) -> Unit, modifier: Modifier = 
         ) { index ->
             EmojiCellMiuix(EmojiRepository.recentEmojis[index], onEmojiClick)
         }
+        if (superEmojis.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                EmojiSectionTitleMiuix(
+                    text = stringResource(R.string.emoji_super_title),
+                    topPadding = 8.dp,
+                )
+            }
+            items(
+                count = superEmojis.size,
+                key = { index -> "super_${superEmojis[index].serverId}" },
+            ) { index ->
+                SuperEmojiCellMiuix(
+                    item = superEmojis[index],
+                    onClick = { onSuperEmojiClick(superEmojis[index]) },
+                )
+            }
+        }
+        if (systemFaces.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                EmojiSectionTitleMiuix(
+                    text = stringResource(R.string.emoji_system_face_title),
+                    topPadding = 8.dp,
+                )
+            }
+            items(
+                count = systemFaces.size,
+                key = { index -> "sysface_${systemFaces[index].serverId}" },
+            ) { index ->
+                SystemFaceCellMiuix(
+                    item = systemFaces[index],
+                    onClick = { onSystemFaceClick(systemFaces[index]) },
+                )
+            }
+        }
         item(span = { GridItemSpan(maxLineSpan) }) {
             EmojiSectionTitleMiuix(
                 text = stringResource(R.string.chat_v2_all_emoji_title),
@@ -1329,6 +1481,48 @@ private fun EmojiGridMiuix(onEmojiClick: (String) -> Unit, modifier: Modifier = 
         ) { index ->
             EmojiCellMiuix(EmojiRepository.emojis[index], onEmojiClick)
         }
+    }
+}
+
+/** 表情页「小黄脸」Miuix 单元格。 */
+@Composable
+private fun SystemFaceCellMiuix(item: SystemFaceItem, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        AnimatedOrStaticImage(
+            path = item.imagePath,
+            contentDescription = item.desc,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.size(32.dp),
+        )
+    }
+}
+
+/** 表情页「超级表情」Miuix 单元格（静态首帧）。 */
+@Composable
+private fun SuperEmojiCellMiuix(item: SuperEmojiItem, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        SuperEmojiAnimation(
+            lottiePath = item.lottiePath,
+            imagePath = item.imagePath,
+            contentDescription = item.desc,
+            fallbackText = item.desc.take(1).ifBlank { "表" },
+            modifier = Modifier.size(34.dp),
+            animate = false,
+        )
     }
 }
 

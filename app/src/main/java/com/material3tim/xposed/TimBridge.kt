@@ -2127,6 +2127,62 @@ internal object TimBridge {
         return ok
     }
 
+    /**
+     * 发送 QQ 超级表情：构造 FaceElement（faceIndex=服务端表情 id，sticker 字段用于让 TIM 识别为超级表情），
+     * 走与普通元素相同的 sendElements。失败返回 false，不抛到 UI。
+     */
+    fun sendSuperEmoji(
+        chatId: String,
+        serverId: Int,
+        desc: String,
+        packId: String,
+        stickerId: String,
+        stickerType: Int = 1,
+    ): Boolean {
+        if (!isHost || chatId.isBlank() || serverId <= 0) return false
+        if (!ensureServices()) return false
+        val cl = hostClassLoader() ?: return false
+        return runCatching {
+            val faceClass = Class.forName(
+                "com.tencent.qqnt.kernel.nativeinterface.FaceElement",
+                false,
+                cl,
+            )
+            val face = faceClass.getConstructor().newInstance()
+            faceClass.getMethod("setFaceIndex", Int::class.javaPrimitiveType)
+                .invoke(face, serverId)
+            faceClass.getMethod("setFaceText", String::class.java).invoke(face, desc)
+            // 与 TIM AIOEmojiFace 发送一致：faceType=3（单 Lottie 超级表情），
+            // sourceType=1、randomType=1；缺少这些字段会被 TIM 当成普通表情解析。
+            faceClass.getMethod("setFaceType", Int::class.javaPrimitiveType).invoke(face, 3)
+            faceClass.getMethod("setStickerType", Integer::class.java)
+                .invoke(face, stickerType.coerceAtLeast(1))
+            faceClass.getMethod("setPackId", String::class.java).invoke(face, packId)
+            faceClass.getMethod("setStickerId", String::class.java).invoke(face, stickerId)
+            faceClass.getMethod("setSourceType", Integer::class.java).invoke(face, 1)
+            faceClass.getMethod("setRandomType", Integer::class.java).invoke(face, 1)
+            val (element, msgElementClass) = newMsgElement(cl, ELEMENT_TYPE_FACE)
+            msgElementClass.getMethod("setFaceElement", faceClass).invoke(element, face)
+            val (sent, code) = sendElementsResult(
+                chatId,
+                ArrayList<Any>().apply { add(element) },
+            )
+            Log.i(
+                TAG,
+                "superEmoji: send chat=$chatId serverId=$serverId pack=$packId " +
+                    "sticker=$stickerId type=$stickerType ok=$sent code=$code",
+            )
+            sent
+        }.getOrElse { t ->
+            Log.w(
+                TAG,
+                "superEmoji: send failed chat=$chatId serverId=$serverId: " +
+                    "${t.javaClass.simpleName} ${t.message}",
+            )
+            false
+        }
+    }
+
     /** 懒加载各子服务（TIM 启动早期这些 getter 可能返回 null，这里每次重试）。 */
     private fun ensureServices(): Boolean {
         if (!initKernel()) return false
@@ -4306,15 +4362,29 @@ internal object TimBridge {
         if (!isHost) return false
         val cl = hostClassLoader() ?: return false
         return try {
-            val textElementClass = Class.forName(
-                "com.tencent.qqnt.kernel.nativeinterface.TextElement", false, cl,
-            )
-            val textElement = textElementClass.getConstructor().newInstance()
-            textElementClass.getMethod("setContent", String::class.java).invoke(textElement, text)
-            val (element, msgElementClass) = newMsgElement(cl, ELEMENT_TYPE_TEXT)
-            msgElementClass.getMethod("setTextElement", textElementClass)
-                .invoke(element, textElement)
-            sendElements(chatId, ArrayList<Any>().apply { add(element) })
+            val catalog = faceTokenCatalog()
+            val elements = ArrayList<Any>()
+            var matchedFace = false
+            if (catalog.isNotEmpty() && text.contains('[')) {
+                var last = 0
+                Regex("\\[([^\\[\\]]{1,12})\\]").findAll(text).forEach { match ->
+                    val desc = match.groupValues[1]
+                    val token = catalog[desc] ?: return@forEach
+                    val start = match.range.first
+                    if (start > last) elements.add(buildTextElement(cl, text.substring(last, start)))
+                    elements.add(buildFaceElement(cl, token, desc))
+                    last = match.range.last + 1
+                    matchedFace = true
+                }
+                if (matchedFace && last < text.length) {
+                    elements.add(buildTextElement(cl, text.substring(last)))
+                }
+            }
+            if (!matchedFace) {
+                elements.clear()
+                elements.add(buildTextElement(cl, text))
+            }
+            sendElements(chatId, elements)
         } catch (t: Throwable) {
             Log.e(TAG, "sendTextMessage failed: ${t.javaClass.simpleName} ${t.message}", t)
             false
@@ -4358,6 +4428,130 @@ internal object TimBridge {
                 ArrayList(msgIds),
                 srcContact,
                 ArrayList(dstContacts),
+    /** 输入框里的 `[描述]` 文本 -> QQ 表情元素（发送时解析）。 */
+    private class FaceToken(
+        val serverId: Int,
+        val isSuperEmoji: Boolean,
+        val packId: String,
+        val stickerId: String,
+        val stickerType: Int,
+    )
+
+    @Volatile
+    private var faceTokenCatalogCache: Map<String, FaceToken>? = null
+
+    /**
+     * 小黄脸/超级表情「描述 -> 发送元素参数」表。
+     * 表情面板点击时往输入框插入 `[描述]`，发送时在 [sendTextMessage] 里替换成 FaceElement。
+     * 同名描述优先小黄脸（普通表情）。
+     */
+    private fun faceTokenCatalog(): Map<String, FaceToken> {
+        faceTokenCatalogCache?.let { return it }
+        val built = runCatching {
+            val cl = hostClassLoader() ?: return emptyMap()
+            val map = LinkedHashMap<String, FaceToken>()
+            val faceUtil = Class.forName(
+                "com.tencent.mobileqq.emoticon.QQSysFaceUtil",
+                false,
+                cl,
+            )
+            @Suppress("UNCHECKED_CAST")
+            val order = faceUtil.getMethod("getOrderList").invoke(null) as? List<Any?>
+                ?: emptyList()
+            @Suppress("UNCHECKED_CAST")
+            val aniOrder = runCatching {
+                faceUtil.getMethod("getAniStickerOrderList").invoke(null) as? List<Any?>
+            }.getOrNull().orEmpty().mapNotNull { (it as? Number)?.toInt() }.toHashSet()
+            val convertToServer = faceUtil.getMethod("convertToServer", Int::class.javaPrimitiveType)
+            val getDesc = faceUtil.getMethod("getFaceDescription", Int::class.javaPrimitiveType)
+            order.forEach { localIdValue ->
+                val localId = (localIdValue as? Number)?.toInt() ?: return@forEach
+                if (localId in aniOrder) return@forEach
+                val desc = (getDesc.invoke(null, localId) as? String)?.takeIf { it.isNotBlank() }
+                    ?: return@forEach
+                val serverId = (convertToServer.invoke(null, localId) as? Number)?.toInt() ?: 0
+                if (serverId <= 0) return@forEach
+                map.putIfAbsent(desc, FaceToken(serverId, false, "", "", 0))
+            }
+            // 超级表情：描述唯一时补充（不覆盖同名小黄脸）。
+            val mgrClass = Class.forName(
+                "com.tencent.mobileqq.emoticon.QQSysAndEmojiResMgr",
+                false,
+                cl,
+            )
+            val mgr = mgrClass.getMethod("getInstance").invoke(null)
+            val res = mgrClass
+                .getMethod("getResImpl", Int::class.javaPrimitiveType)
+                .invoke(mgr, 1)
+            aniOrder.forEach { localId ->
+                val info = runCatching {
+                    res.javaClass.getMethod(
+                        "getAniStickerInfo",
+                        Int::class.javaPrimitiveType,
+                        String::class.java,
+                        String::class.java,
+                    ).invoke(res, localId, "", "")
+                }.getOrNull() ?: return@forEach
+                val desc = hostFieldString(info, "text")?.takeIf { it.isNotBlank() } ?: return@forEach
+                val serverId = hostFieldInt(info, "sevrId") ?: 0
+                if (serverId <= 0) return@forEach
+                map.putIfAbsent(
+                    "超级:$desc",
+                    FaceToken(
+                        serverId = serverId,
+                        isSuperEmoji = true,
+                        packId = hostFieldString(info, "aniStickerPackId").orEmpty(),
+                        stickerId = hostFieldString(info, "aniStickerId").orEmpty(),
+                        stickerType = hostFieldInt(info, "aniStickerType") ?: 1,
+                    ),
+                )
+            }
+            map
+        }.getOrDefault(emptyMap())
+        faceTokenCatalogCache = built
+        return built
+    }
+
+    private fun buildTextElement(cl: ClassLoader, text: String): Any {
+        val textElementClass = Class.forName(
+            "com.tencent.qqnt.kernel.nativeinterface.TextElement",
+            false,
+            cl,
+        )
+        val textElement = textElementClass.getConstructor().newInstance()
+        textElementClass.getMethod("setContent", String::class.java).invoke(textElement, text)
+        val (element, msgElementClass) = newMsgElement(cl, ELEMENT_TYPE_TEXT)
+        msgElementClass.getMethod("setTextElement", textElementClass).invoke(element, textElement)
+        return element
+    }
+
+    private fun buildFaceElement(cl: ClassLoader, token: FaceToken, desc: String): Any {
+        val faceClass = Class.forName(
+            "com.tencent.qqnt.kernel.nativeinterface.FaceElement",
+            false,
+            cl,
+        )
+        val face = faceClass.getConstructor().newInstance()
+        faceClass.getMethod("setFaceIndex", Int::class.javaPrimitiveType)
+            .invoke(face, token.serverId)
+        faceClass.getMethod("setFaceText", String::class.java).invoke(face, desc)
+        if (token.isSuperEmoji) {
+            faceClass.getMethod("setFaceType", Int::class.javaPrimitiveType).invoke(face, 3)
+            faceClass.getMethod("setStickerType", Integer::class.java)
+                .invoke(face, token.stickerType.coerceAtLeast(1))
+            faceClass.getMethod("setPackId", String::class.java).invoke(face, token.packId)
+            faceClass.getMethod("setStickerId", String::class.java).invoke(face, token.stickerId)
+            faceClass.getMethod("setSourceType", Integer::class.java).invoke(face, 1)
+            faceClass.getMethod("setRandomType", Integer::class.java).invoke(face, 1)
+        } else {
+            faceClass.getMethod("setFaceType", Int::class.javaPrimitiveType)
+                .invoke(face, if (token.serverId <= 247) 1 else 2)
+        }
+        val (element, msgElementClass) = newMsgElement(cl, ELEMENT_TYPE_FACE)
+        msgElementClass.getMethod("setFaceElement", faceClass).invoke(element, face)
+        return element
+    }
+
                 attrs,
                 callback,
             )
@@ -8464,6 +8658,348 @@ internal object TimBridge {
         if (group != null) {
             val member = (invokeGetter(group, "getMemberNick") as? String)
                 ?.takeIf { it.isNotBlank() }
+    private val timSuperEmojiInfoCache =
+        java.util.concurrent.ConcurrentHashMap<Int, SuperEmojiItem>()
+
+    /** 用 TIM 自己的 AniStickerInfo 补齐入站 FaceElement 缺的 pack/sticker/描述信息。 */
+    private fun timSuperEmojiInfo(serverId: Int): SuperEmojiItem? {
+        if (serverId <= 0) return null
+        timSuperEmojiInfoCache[serverId]?.let { return it }
+        val info = timSuperEmojiInfoUncached(serverId) ?: return null
+        timSuperEmojiInfoCache[serverId] = info
+        return info
+    }
+
+    private fun timSuperEmojiInfoUncached(serverId: Int): SuperEmojiItem? {
+        if (serverId <= 0) return null
+        val cl = hostClassLoader() ?: return null
+        return runCatching {
+            val faceUtil = Class.forName(
+                "com.tencent.mobileqq.emoticon.QQSysFaceUtil",
+                false,
+                cl,
+            )
+            val localId = (faceUtil
+                .getMethod("convertToLocal", Int::class.javaPrimitiveType)
+                .invoke(null, serverId) as? Number)?.toInt() ?: return@runCatching null
+            val mgrClass = Class.forName(
+                "com.tencent.mobileqq.emoticon.QQSysAndEmojiResMgr",
+                false,
+                cl,
+            )
+            val mgr = mgrClass.getMethod("getInstance").invoke(null) ?: return@runCatching null
+            val res = mgrClass
+                .getMethod("getResImpl", Int::class.javaPrimitiveType)
+                .invoke(mgr, 1)
+                ?: return@runCatching null
+            val info = res.javaClass.getMethod(
+                "getAniStickerInfo",
+                Int::class.javaPrimitiveType,
+                String::class.java,
+                String::class.java,
+            ).invoke(res, localId, "", "") ?: return@runCatching null
+            val packId = hostFieldString(info, "aniStickerPackId").orEmpty()
+            val stickerId = hostFieldString(info, "aniStickerId").orEmpty()
+            val lottie = runCatching {
+                info.javaClass.getMethod("getFinishStateResFilePath").invoke(info) as? String
+            }.getOrNull()?.takeIf { it.isNotBlank() && java.io.File(it).isFile }
+            val (_, image) = superEmojiAssetPaths(
+                serverId = serverId,
+                packId = packId,
+                stickerId = stickerId,
+                resultId = "",
+                surpriseId = "",
+            )
+            SuperEmojiItem(
+                localId = localId,
+                serverId = serverId,
+                desc = hostFieldString(info, "text").orEmpty(),
+                packId = packId,
+                stickerId = stickerId,
+                stickerType = hostFieldInt(info, "aniStickerType") ?: 1,
+                lottiePath = lottie,
+                imagePath = image,
+                width = hostFieldString(info, "aniStickerWidth")?.toIntOrNull() ?: 0,
+                height = hostFieldString(info, "aniStickerHeight")?.toIntOrNull() ?: 0,
+            )
+        }.getOrNull()
+    }
+
+    /** QQ 系统小黄脸静态图片缓存（localId -> png 路径）；TIM 静态表情是 APK 内资源，解码后缓存成文件。 */
+    private val systemFacePathCache = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+    private fun systemFacePngPath(serverId: Int): String? {
+        if (serverId <= 0) return null
+        systemFacePathCache[serverId]?.let { return it }
+        val path = runCatching {
+            val cl = hostClassLoader() ?: return@runCatching null
+            val context = hostContext() ?: return@runCatching null
+            val dir = java.io.File(context.cacheDir, "m3tim_sysface").apply { mkdirs() }
+            val faceUtil = Class.forName(
+                "com.tencent.mobileqq.emoticon.QQSysFaceUtil",
+                false,
+                cl,
+            )
+            val localId = (faceUtil
+                .getMethod("convertToLocal", Int::class.javaPrimitiveType)
+                .invoke(null, serverId) as? Number)?.toInt() ?: return@runCatching null
+            val file = java.io.File(dir, "$localId.png")
+            if (file.isFile && file.length() > 0L) return@runCatching file.absolutePath
+            val constClass = Class.forName(
+                "com.tencent.mobileqq.text.EmotcationConstants",
+                false,
+                cl,
+            )
+            val resIds = constClass.getField("STATIC_SYS_EMOTCATION_RESOURCE").get(null) as? IntArray
+                ?: return@runCatching null
+            val resId = resIds.getOrNull(localId) ?: return@runCatching null
+            val timResources = runCatching {
+                val mobileQQClass = Class.forName("mqq.app.MobileQQ", false, cl)
+                val mobileQQ = mobileQQClass.getField("sMobileQQ").get(null) as? android.content.Context
+                mobileQQ?.resources
+            }.getOrNull() ?: runCatching {
+                val baseClass = Class.forName(
+                    "com.tencent.qphone.base.util.BaseApplication",
+                    false,
+                    cl,
+                )
+                val base = baseClass.getField("context").get(null) as? android.content.Context
+                base?.resources
+            }.getOrNull() ?: return@runCatching null
+            val bitmap = android.graphics.BitmapFactory.decodeResource(timResources, resId)
+                ?: return@runCatching null
+            file.outputStream().use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+            bitmap.recycle()
+            file.absolutePath
+        }.getOrNull()
+        if (path != null) {
+            systemFacePathCache[serverId] = path
+        } else {
+            Log.w(TAG, "sysFace: decode failed serverId=$serverId")
+        }
+        return path
+    }
+
+    /** FaceElement 是否超级表情（TIM 超级表情 faceType=3；兼容只带 stickerType/packId 的旧结构）。 */
+    private fun isSuperEmojiFace(face: Any?): Boolean = runCatching {
+        if (face == null) return@runCatching false
+        val faceType = (invokeGetter(face, "getFaceType") as? Number)?.toInt() ?: 0
+        val stickerType = (invokeGetter(face, "getStickerType") as? Number)?.toInt() ?: 0
+        val packId = (invokeGetter(face, "getPackId") as? String).orEmpty()
+        val stickerId = (invokeGetter(face, "getStickerId") as? String).orEmpty()
+        faceType == 3 || stickerType > 0 || (packId.isNotBlank() && stickerId.isNotBlank())
+    }.getOrDefault(false)
+
+    /** 超级表情资源解析缓存：同一表情在多条消息里只反射 TIM 一次，避免长列表加载卡顿。 */
+    private val superEmojiAssetCache =
+        java.util.concurrent.ConcurrentHashMap<String, Pair<String?, String?>>()
+
+    /** 超级表情资源解析：返回 (Lottie JSON 路径, 静态兜底图路径)，都必须是已存在的文件。 */
+    private fun superEmojiAssetPaths(
+        serverId: Int,
+        packId: String,
+        stickerId: String,
+        resultId: String,
+        surpriseId: String,
+    ): Pair<String?, String?> {
+        if (serverId <= 0) return null to null
+        val cacheKey = "$serverId|$packId|$stickerId|$resultId|$surpriseId"
+        superEmojiAssetCache[cacheKey]?.let { return it }
+        val cl = hostClassLoader() ?: return null to null
+        val resolved = runCatching {
+            val mgrClass = Class.forName(
+                "com.tencent.mobileqq.emoticon.QQSysAndEmojiResMgr",
+                false,
+                cl,
+            )
+            val mgr = mgrClass.getMethod("getInstance").invoke(null) ?: return@runCatching null to null
+            fun lottiePathByName(name: String, vararg args: Any?): String? = runCatching {
+                val types = args.map { arg ->
+                    when (arg) {
+                        is Int -> Int::class.javaPrimitiveType
+                        is Boolean -> Boolean::class.javaPrimitiveType
+                        else -> String::class.java
+                    }
+                }.toTypedArray()
+                val method = mgrClass.methods.firstOrNull {
+                    it.name == name && it.parameterCount == types.size
+                } ?: return@runCatching null
+                method.invoke(mgr, *args) as? String
+            }.getOrNull()
+            val lottie = when {
+                resultId.isNotBlank() && packId.isNotBlank() && stickerId.isNotBlank() ->
+                    lottiePathByName(
+                        "getAniStickerRandomResultFullResPath",
+                        serverId, packId, stickerId, resultId,
+                    )
+                surpriseId.isNotBlank() && packId.isNotBlank() && stickerId.isNotBlank() ->
+                    lottiePathByName(
+                        "getAniStickerSurpriseFullResPath",
+                        serverId, packId, stickerId, surpriseId, false,
+                    )
+                packId.isNotBlank() && stickerId.isNotBlank() ->
+                    lottiePathByName("getAniStickerResPath", serverId, packId, stickerId)
+                else -> null
+            }?.takeIf { it.isNotBlank() && java.io.File(it).isFile }
+            // 静态兜底：TIM 的 png/apng 资源（getFullResPath(2, serverId)）。
+            val image = runCatching {
+                mgrClass.getMethod(
+                    "getFullResPath",
+                    Int::class.javaPrimitiveType,
+                    Int::class.javaPrimitiveType,
+                ).invoke(mgr, 2, serverId) as? String
+            }.getOrNull()?.takeIf { it.isNotBlank() && java.io.File(it).isFile }
+            lottie to image
+        }.getOrDefault(null to null)
+        superEmojiAssetCache[cacheKey] = resolved
+        return resolved
+    }
+
+    /** 加载 QQ 系统小黄脸列表（TIM QQSysFaceUtil.getOrderList，排除超级表情）。阻塞。 */
+    fun loadSystemFaces(): List<SystemFaceItem>? {
+        if (!isHost || !ensureServices()) return null
+        val cl = hostClassLoader() ?: return null
+        return runCatching {
+            val faceUtil = Class.forName(
+                "com.tencent.mobileqq.emoticon.QQSysFaceUtil",
+                false,
+                cl,
+            )
+            @Suppress("UNCHECKED_CAST")
+            val order = faceUtil.getMethod("getOrderList").invoke(null) as? List<Any?>
+                ?: return null
+            @Suppress("UNCHECKED_CAST")
+            val aniOrder = runCatching {
+                faceUtil.getMethod("getAniStickerOrderList").invoke(null) as? List<Any?>
+            }.getOrNull().orEmpty().mapNotNull { (it as? Number)?.toInt() }.toHashSet()
+            val convertToServer = faceUtil.getMethod(
+                "convertToServer",
+                Int::class.javaPrimitiveType,
+            )
+            val getDescription = faceUtil.getMethod(
+                "getFaceDescription",
+                Int::class.javaPrimitiveType,
+            )
+            order.mapNotNull { localIdValue ->
+                val localId = (localIdValue as? Number)?.toInt() ?: return@mapNotNull null
+                if (localId in aniOrder) return@mapNotNull null
+                val serverId = (convertToServer.invoke(null, localId) as? Number)?.toInt() ?: 0
+                if (serverId <= 0) return@mapNotNull null
+                SystemFaceItem(
+                    localId = localId,
+                    serverId = serverId,
+                    desc = (getDescription.invoke(null, localId) as? String).orEmpty(),
+                    imagePath = systemFacePngPath(serverId),
+                )
+            }.takeIf { it.isNotEmpty() }
+        }.getOrNull()?.also { list ->
+            Log.i(
+                TAG,
+                "sysFace: loadSystemFaces count=${list.size} " +
+                    "withImage=${list.count { it.imagePath != null }}",
+            )
+        }
+    }
+
+    /** 发送 QQ 系统小黄脸：普通 FaceElement（faceType 1/2、faceIndex=serverId、faceText=描述）。阻塞。 */
+    fun sendSystemFace(chatId: String, serverId: Int, desc: String): Boolean {
+        if (!isHost || chatId.isBlank() || serverId <= 0) return false
+        if (!ensureServices()) return false
+        val cl = hostClassLoader() ?: return false
+        return runCatching {
+            val faceClass = Class.forName(
+                "com.tencent.qqnt.kernel.nativeinterface.FaceElement",
+                false,
+                cl,
+            )
+            val face = faceClass.getConstructor().newInstance()
+            faceClass.getMethod("setFaceIndex", Int::class.javaPrimitiveType)
+                .invoke(face, serverId)
+            faceClass.getMethod("setFaceText", String::class.java).invoke(face, desc)
+            faceClass.getMethod("setFaceType", Int::class.javaPrimitiveType)
+                .invoke(face, if (serverId <= 247) 1 else 2)
+            val (element, msgElementClass) = newMsgElement(cl, ELEMENT_TYPE_FACE)
+            msgElementClass.getMethod("setFaceElement", faceClass).invoke(element, face)
+            val (sent, code) = sendElementsResult(
+                chatId,
+                ArrayList<Any>().apply { add(element) },
+            )
+            Log.i(TAG, "sysFace: send chat=$chatId serverId=$serverId ok=$sent code=$code")
+            sent
+        }.getOrElse { t ->
+            Log.w(
+                TAG,
+                "sysFace: send failed chat=$chatId serverId=$serverId: " +
+                    "${t.javaClass.simpleName} ${t.message}",
+            )
+            false
+        }
+    }
+
+    /** 加载 QQ 超级表情列表（TIM QQSysFaceResImpl.getAniStickerOrderList + Lottie 路径）。阻塞。 */
+    fun loadSuperEmojis(): List<SuperEmojiItem>? {
+        if (!isHost || !ensureServices()) return null
+        val cl = hostClassLoader() ?: return null
+        return runCatching {
+            val mgrClass = Class.forName(
+                "com.tencent.mobileqq.emoticon.QQSysAndEmojiResMgr",
+                false,
+                cl,
+            )
+            val mgr = mgrClass.getMethod("getInstance").invoke(null) ?: return null
+            val res = mgrClass
+                .getMethod("getResImpl", Int::class.javaPrimitiveType)
+                .invoke(mgr, 1)
+                ?: return null
+            @Suppress("UNCHECKED_CAST")
+            val order = res.javaClass.getMethod("getAniStickerOrderList").invoke(res) as? List<Any?>
+                ?: return null
+            order.mapNotNull { localIdValue ->
+                val localId = (localIdValue as? Number)?.toInt() ?: return@mapNotNull null
+                val info = runCatching {
+                    res.javaClass.getMethod(
+                        "getAniStickerInfo",
+                        Int::class.javaPrimitiveType,
+                        String::class.java,
+                        String::class.java,
+                    ).invoke(res, localId, "", "")
+                }.getOrNull() ?: return@mapNotNull null
+                val serverId = hostFieldInt(info, "sevrId") ?: 0
+                if (serverId <= 0) return@mapNotNull null
+                val packId = hostFieldString(info, "aniStickerPackId").orEmpty()
+                val stickerId = hostFieldString(info, "aniStickerId").orEmpty()
+                val desc = hostFieldString(info, "text").orEmpty()
+                val stickerType = hostFieldInt(info, "aniStickerType") ?: 1
+                val width = hostFieldString(info, "aniStickerWidth")?.toIntOrNull() ?: 0
+                val height = hostFieldString(info, "aniStickerHeight")?.toIntOrNull() ?: 0
+                val lottie = runCatching {
+                    info.javaClass.getMethod("getFinishStateResFilePath").invoke(info) as? String
+                }.getOrNull()?.takeIf { it.isNotBlank() && java.io.File(it).isFile }
+                val (resolvedLottie, image) = superEmojiAssetPaths(
+                    serverId = serverId,
+                    packId = packId,
+                    stickerId = stickerId,
+                    resultId = "",
+                    surpriseId = "",
+                )
+                SuperEmojiItem(
+                    localId = localId,
+                    serverId = serverId,
+                    desc = desc,
+                    packId = packId,
+                    stickerId = stickerId,
+                    stickerType = stickerType,
+                    lottiePath = lottie ?: resolvedLottie,
+                    imagePath = image,
+                    width = width,
+                    height = height,
+                )
+            }
+        }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
             val sub = (invokeGetter(gray, "getSubElementType") as? Number)?.toInt() ?: 0
             if (!member.isNullOrBlank()) {
                 return when (sub) {
@@ -8848,7 +9384,63 @@ internal object TimBridge {
                     val content = text?.let { invokeGetter(it, "getContent") as? String }
                     if (!content.isNullOrBlank()) textBuffer.append(content)
                 }
-                ELEMENT_TYPE_FACE -> textBuffer.append("[表情]")
+                ELEMENT_TYPE_FACE -> {
+                    val face = invokeGetter(element, "getFaceElement")
+                    val faceText = (face?.let { invokeGetter(it, "getFaceText") } as? String).orEmpty()
+                    if (isSuperEmojiFace(face)) {
+                        if (elements.size == 1) {
+                            return describeElements(elements, msgId) to emptyList()
+                        }
+                        val faceIndex =
+                            (face?.let { invokeGetter(it, "getFaceIndex") } as? Number)?.toInt() ?: 0
+                        val packId = (face?.let { invokeGetter(it, "getPackId") } as? String).orEmpty()
+                        val stickerId = (face?.let { invokeGetter(it, "getStickerId") } as? String).orEmpty()
+                        val info = timSuperEmojiInfo(faceIndex)
+                        val (lottiePath, imagePath) = superEmojiAssetPaths(
+                            serverId = faceIndex,
+                            packId = packId.ifBlank { info?.packId.orEmpty() },
+                            stickerId = stickerId.ifBlank { info?.stickerId.orEmpty() },
+                            resultId = (face?.let { invokeGetter(it, "getResultId") } as? String).orEmpty(),
+                            surpriseId = (face?.let { invokeGetter(it, "getSurpriseId") } as? String).orEmpty(),
+                        )
+                        flushText()
+                        parts.add(
+                            ChatPart(
+                                kind = ChatPartKind.IMAGE,
+                                imageWidth = 1,
+                                imageHeight = 1,
+                                emojiImage = true,
+                                elementId =
+                                    (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L,
+                                isSuperEmoji = true,
+                                superEmojiLottiePath = lottiePath,
+                                superEmojiImagePath = imagePath,
+                                faceDescription = faceText.ifBlank { "超级表情" },
+                            ),
+                        )
+                    } else {
+                        val faceIndex =
+                            (face?.let { invokeGetter(it, "getFaceIndex") } as? Number)?.toInt() ?: 0
+                        val facePath = systemFacePngPath(faceIndex)
+                        if (facePath != null) {
+                            flushText()
+                            parts.add(
+                                ChatPart(
+                                    kind = ChatPartKind.IMAGE,
+                                    imagePath = facePath,
+                                    imageWidth = 1,
+                                    imageHeight = 1,
+                                    emojiImage = true,
+                                    elementId =
+                                        (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L,
+                                    isSystemFace = true,
+                                ),
+                            )
+                        } else {
+                            textBuffer.append(faceText.ifBlank { "[表情]" })
+                        }
+                    }
+                }
                 ELEMENT_TYPE_MARKET_FACE -> {
                     flushText()
                     runCatching { describeMarketFaceElement(element, msgId) }
@@ -9035,6 +9627,7 @@ internal object TimBridge {
                     val path = pttPath?.takeIf { pathUsable(it) }
                         ?: listOfNotNull(pttMd5, pttUuid, pttName)
                             .firstNotNullOfOrNull { key ->
+            if (part.isSystemFace) return describeElements(elements, msgId) to emptyList()
                                 sentVoiceLocalPaths[key]?.takeIf { pathUsable(it) }
                             }
                         ?: downloadedMediaByElement[pttElementId]?.takeIf { pathUsable(it) }
@@ -9261,6 +9854,17 @@ internal object TimBridge {
                     // Bot/机器人 Markdown 消息：按纯文本展示（去掉常见 Markdown 标记）。
                     val md = invokeGetter(element, "getMarkdownElement")
                     val raw = (md?.let { invokeGetter(it, "getContent") } as? String).orEmpty()
+                ELEMENT_TYPE_FACE -> {
+                    val face = invokeGetter(element, "getFaceElement")
+                    val faceText = (face?.let { invokeGetter(it, "getFaceText") } as? String).orEmpty()
+                    val faceElementId = (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L
+                    if (isSuperEmojiFace(face)) {
+                        val faceIndex = (face?.let { invokeGetter(it, "getFaceIndex") } as? Number)?.toInt() ?: 0
+                        val packId = (face?.let { invokeGetter(it, "getPackId") } as? String).orEmpty()
+                        val stickerId = (face?.let { invokeGetter(it, "getStickerId") } as? String).orEmpty()
+                        val resultId = (face?.let { invokeGetter(it, "getResultId") } as? String).orEmpty()
+                        val surpriseId = (face?.let { invokeGetter(it, "getSurpriseId") } as? String).orEmpty()
+                        val info = timSuperEmojiInfo(faceIndex)
                     val plain = raw
                         .replace(Regex("```[\\s\\S]*?```"), "")
                         .replace(Regex("[#>*_`~]"), "")
@@ -21637,6 +22241,10 @@ internal class TimMessageSource : MessageSource {
     override fun loadHistoryAround(chatId: String, seq: Long, count: Int): List<ChatMessage>? =
         TimBridge.loadHistoryAround(chatId, seq, count)
 
+    override fun loadSuperEmojis(): List<SuperEmojiItem>? = TimBridge.loadSuperEmojis()
+
+    override fun loadSystemFaces(): List<SystemFaceItem>? = TimBridge.loadSystemFaces()
+
     override fun sendText(chatId: String, text: String): Boolean = TimBridge.sendTextMessage(chatId, text)
 
     override fun sendImage(chatId: String, filePath: String, width: Int, height: Int): Boolean =
@@ -21760,6 +22368,25 @@ internal class TimMessageSource : MessageSource {
         text = text,
         atTargets = atTargets,
         replyToMsgId = replyToMsgId,
+    override fun sendSuperEmoji(
+        chatId: String,
+        serverId: Int,
+        desc: String,
+        packId: String,
+        stickerId: String,
+        stickerType: Int,
+    ): Boolean = TimBridge.sendSuperEmoji(
+        chatId,
+        serverId,
+        desc,
+        packId,
+        stickerId,
+        stickerType,
+    )
+
+    override fun sendSystemFace(chatId: String, serverId: Int, desc: String): Boolean =
+        TimBridge.sendSystemFace(chatId, serverId, desc)
+
         replySenderUid = replySenderUid,
         replySourceText = replySourceText,
     )

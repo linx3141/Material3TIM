@@ -82,6 +82,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -138,6 +140,9 @@ import com.material3tim.ui.navigation3.Route
 import com.material3tim.data.model.ChatItem
 import com.material3tim.data.model.ChatMessage
 import com.material3tim.data.repository.LiveProfile
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.data.model.ChatMember
 import com.material3tim.data.model.CustomEmoji
@@ -153,6 +158,8 @@ import com.material3tim.ui.component.VoicePlaybackController
 import com.material3tim.ui.theme.LocalEnableBlur
 import com.material3tim.ui.component.miuix.glass.LocalPageBackdrop
 import com.material3tim.ui.component.miuix.glass.GlassMenuHost
+import com.material3tim.data.model.SuperEmojiItem
+import com.material3tim.data.model.SystemFaceItem
 import com.material3tim.ui.component.miuix.glass.GlassMenuState
 import com.material3tim.ui.component.miuix.glass.LocalGlassMenu
 import com.material3tim.ui.component.miuix.glass.rememberPageBackdrop
@@ -259,6 +266,8 @@ internal fun ChatDetailMiuix(
     // 聊天页顶栏始终是钉住的小标题（不展开大标题），scrollBehavior 只用于玻璃栏的滚动态样式。
     val scrollBehavior = MiuixScrollBehavior()
     val listState = rememberLazyListState()
+    onSendSuperEmoji: (SuperEmojiItem) -> Unit = {},
+    onSendSystemFace: (SystemFaceItem) -> Unit = {},
     val groupedMessages = remember(messages) { groupChatMessages(messages) }
     // 群聊里自己消息上方也要显示昵称：优先群成员列表里的「我」的群名片。
     val selfGroupName = remember(atMembers) {
@@ -828,6 +837,9 @@ internal fun ChatDetailMiuix(
             },
             onBackToBottom = {
                 backToBottomGestureVisible = false
+                        // 与点击 Unicode emoji 一致：表情文字插入输入框，发送时按普通文本发出。
+                        onSendSuperEmoji = { item -> composer.appendEmoji("[超级:${item.desc}]") },
+                        onSendSystemFace = { item -> composer.appendEmoji("[${item.desc}]") },
                 downAccumulatedPx = 0f
                 fabScope.launch {
                     listState.animateScrollToItem(groupedMessages.lastIndex.coerceAtLeast(0))
@@ -1393,6 +1405,14 @@ private fun InlinePartsBubbleMiuix(
     }
 }
 
+    // 只有「文字 + 小黄脸」时走行内渲染：表情和文字同高。
+    if (message.parts.none {
+            it.kind == ChatPartKind.IMAGE && !it.isSystemFace && !it.isSuperEmoji
+        }
+    ) {
+        InlinePartsBubbleMiuix(message, container, content, position)
+        return
+    }
                                     } else {
                                         ContentScale.Crop
                                     },

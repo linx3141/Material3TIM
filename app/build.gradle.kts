@@ -144,6 +144,8 @@ dependencies {
     implementation(libs.material.kolor.material3)
     implementation("androidx.browser:browser:1.8.0")
     implementation("com.google.zxing:core:3.5.3")
+    // QQ 超级表情：TIM 的动画资源是 Lottie JSON（lottiDirPath/{sevrId}.json），用 Lottie 播放。
+    implementation("com.airbnb.android:lottie-compose:6.7.1")
 }
 
 kotlin {

@@ -33,6 +33,43 @@ data class CustomEmoji(
     val isMarkFace: Boolean = false,
 )
 
+/**
+ * QQ 超级表情（TIM 里「表情」页的大号动画小黄脸）。
+ *
+ * TIM 的实现：`FaceElement`（elementType=6）里带 stickerType/stickerId/packId，
+ * 动画资源是 Lottie JSON（`QQSysAndEmojiResMgr.getAniStickerResPath()` 返回的路径）。
+ */
+@Immutable
+data class SuperEmojiItem(
+    /** 本地 id（QQSysFaceUtil 的 localId）。 */
+    val localId: Int,
+    /** 服务端表情 id（FaceElement.faceIndex / QSid）。 */
+    val serverId: Int,
+    /** 描述文字（表情名/alt 文本）。 */
+    val desc: String = "",
+    /** 动画资源包 id / 动画贴纸 id（用于解析 Lottie 路径）。 */
+    val packId: String = "",
+    val stickerId: String = "",
+    /** TIM AniStickerInfo.aniStickerType（超级表情发送需要，普通大表情一般为 1）。 */
+    val stickerType: Int = 1,
+    /** 已下载的 Lottie JSON 本地路径；为空表示资源未下载。 */
+    val lottiePath: String? = null,
+    /** 静态兜底图（APNG/PNG）本地路径。 */
+    val imagePath: String? = null,
+    val width: Int = 0,
+    val height: Int = 0,
+)
+
+/** QQ 系统小黄脸（FaceElement 普通表情，静态内置图片）。 */
+@Immutable
+data class SystemFaceItem(
+    val localId: Int,
+    val serverId: Int,
+    val desc: String = "",
+    /** 已解码缓存的静态 png 路径（为空表示解析失败）。 */
+    val imagePath: String? = null,
+)
+
 /** 加好友/群搜索到的个人账号。 */
 /** 目标用户的加好友设置（TIM 原生 friend_setting + 验证问题）。 */
 data class AddFriendSettingInfo(

@@ -126,6 +126,22 @@ interface MessageSource {
 
     /**
      * 用系统录音机录音并作为语音消息发送到 [chatId]：拉起 MediaStore.RECORD_SOUND，
+    /**
+     * 发送 QQ 超级表情（FaceElement 带 stickerType/packId/stickerId）；失败返回 false。
+     * 阻塞，需在 IO 线程调用。
+     */
+    fun sendSuperEmoji(
+        chatId: String,
+        serverId: Int,
+        desc: String,
+        packId: String,
+        stickerId: String,
+        stickerType: Int = 1,
+    ): Boolean = false
+
+    /** 发送 QQ 系统小黄脸（普通 FaceElement）。阻塞，需在 IO 线程调用。 */
+    fun sendSystemFace(chatId: String, serverId: Int, desc: String): Boolean = false
+
      * 结果经 TimUiHook.onActivityResult → 桥接复制/转码 → TIM 语音发送链路。
      * 返回 false 表示没有前台 Activity / 已有记录进行中（独立 App 默认 false）。
      */
@@ -340,6 +356,12 @@ interface EmojiSource {
     fun refreshFavoriteEmojis(): List<CustomEmoji>? = loadFavoriteEmojis()
 
     /**
+    /** 阻塞加载 QQ 超级表情列表；失败/宿主未就绪返回 null。必须在后台线程调用。 */
+    fun loadSuperEmojis(): List<com.material3tim.data.model.SuperEmojiItem>? = null
+
+    /** 阻塞加载 QQ 系统小黄脸列表（静态内置表情）；失败返回 null。必须在后台线程调用。 */
+    fun loadSystemFaces(): List<com.material3tim.data.model.SystemFaceItem>? = null
+
      * 长按图片/表情消息「添加到表情」：按 elementId 找 PicElement/MarketFaceElement，
      * 必要时先下载原图，再走 TIM 收藏 API。成功（已触发/已添加）返回 true。
      */

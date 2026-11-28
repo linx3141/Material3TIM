@@ -19,6 +19,14 @@ data class ChatPart(
     val emojiImage: Boolean = false,
     /** 对应 MsgElement 的 elementId（图片下载/重新拉取用）。 */
     val elementId: Long = 0L,
+    /** QQ 系统小黄脸：文本气泡内按行内小表情渲染（与文字同高）。 */
+    val isSystemFace: Boolean = false,
+    /** QQ 超级表情：文本气泡内按行内小表情渲染。 */
+    val isSuperEmoji: Boolean = false,
+    val superEmojiLottiePath: String? = null,
+    val superEmojiImagePath: String? = null,
+    /** 表情含义（contentDescription/无资源时的兜底文本）。 */
+    val faceDescription: String = "",
 )
 
 /** 聊天消息类型。 */
@@ -36,6 +44,12 @@ enum class ChatMessageType {
     VIDEO,
     /** ARK 卡片（小程序/结构化消息/分享卡片等） */
     ARK,
+    /** 语音/视频通话记录（AVRecordElement，elementType=21） */
+    CALL,
+    /** QQ 超级表情（FaceElement 带 stickerType/packId，Lottie 动画大表情） */
+    SUPER_EMOJI,
+    /** QQ 系统小黄脸（FaceElement 普通静态表情，渲染为小尺寸图片） */
+    SYS_FACE,
 }
 
 /**
@@ -74,6 +88,13 @@ data class ChatMessage(
     val isEmojiImage: Boolean = false,
     /** 语音/文件的本地文件路径（后续点击播放/打开用） */
     val mediaPath: String? = null,
+    /** 超级表情：Lottie JSON 动画本地路径（TIM 已下载时）。 */
+    val superEmojiLottiePath: String? = null,
+    /** 超级表情：静态兜底图（APNG/PNG）本地路径。 */
+    val superEmojiImagePath: String? = null,
+    /** 超级表情原始尺寸（用于按比例放大显示；0 表示未知）。 */
+    val superEmojiWidth: Int = 0,
+    val superEmojiHeight: Int = 0,
     /** 是否显示时间分隔条（例如 "今天 14:32"） */
     val timeSeparator: String? = null,
     /** 消息时间戳（毫秒，真实消息用；示例数据为 0）。加载更早消息后用它重排时间分隔条。 */

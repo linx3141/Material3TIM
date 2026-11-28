@@ -60,6 +60,8 @@ import com.material3tim.data.model.ChatMessage
 import com.material3tim.data.model.DataLine
 import com.material3tim.data.model.ChatMember
 import com.material3tim.data.model.CustomEmoji
+import com.material3tim.data.model.SuperEmojiItem
+import com.material3tim.data.model.SystemFaceItem
 import com.material3tim.data.model.ChatMessageType
 import com.material3tim.data.model.ChatPartKind
 import com.material3tim.data.repository.ChatRepository
@@ -1326,6 +1328,68 @@ private fun ChatDetailContent(
             ).show()
         }
     }
+    // 超级表情：发送 FaceElement（bridge 构造 sticker 字段）；失败 Toast 反馈。
+    val onSendSuperEmoji: (SuperEmojiItem) -> Unit = { item ->
+        scope.launch {
+            val source = AppDataSources.messageSource
+            val ok = if (source == null) {
+                false
+            } else {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        source.sendSuperEmoji(
+                            chat.id,
+                            item.serverId,
+                            item.desc,
+                            item.packId,
+                            item.stickerId,
+                            item.stickerType,
+                        )
+                    }.getOrDefault(false)
+                }
+            }
+            android.widget.Toast.makeText(
+                context,
+                if (ok) R.string.emoji_super_sent else R.string.emoji_super_send_failed,
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+            if (ok) {
+                delay(300)
+                val reloaded = withContext(Dispatchers.IO) {
+                    AppDataSources.messageSource?.loadMessages(chat.id)
+                }
+                if (reloaded != null) baseMessages = reloaded
+            }
+        }
+    }
+
+    // 小黄脸：发送 FaceElement 普通表情（faceType 1/2）。
+    val onSendSystemFace: (SystemFaceItem) -> Unit = { item ->
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    AppDataSources.messageSource?.sendSystemFace(
+                        chat.id,
+                        item.serverId,
+                        item.desc,
+                    )
+                }.getOrNull() ?: false
+            }
+            android.widget.Toast.makeText(
+                context,
+                if (ok) R.string.emoji_system_face_sent else R.string.emoji_system_face_send_failed,
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+            if (ok) {
+                delay(300)
+                val reloaded = withContext(Dispatchers.IO) {
+                    AppDataSources.messageSource?.loadMessages(chat.id)
+                }
+                if (reloaded != null) baseMessages = reloaded
+            }
+        }
+    }
+
     val onSend: (String) -> Unit = { raw ->
         val text = raw.trim()
         if (text.isNotEmpty()) {
@@ -1484,6 +1548,8 @@ private fun ChatDetailContent(
             selectedMessageIds = selectedMessageIds,
             onToggleSelectMessage = onToggleSelectMessage,
             onEnterSelection = onEnterSelection,
+            onSendSuperEmoji = onSendSuperEmoji,
+            onSendSystemFace = onSendSystemFace,
             onExitSelection = onExitSelection,
             onForwardSelected = onForwardSelected,
             onForwardMessage = onForwardMessage,
@@ -1537,6 +1603,8 @@ internal data class ChatScrollAnchor(
 /**
  * 合并「已加载的更早消息」与「最新一页 + 本地发送」：按 id 去重并保持升序，
  * 然后用 timestampMs 重新计算时间分隔条（跨批次衔接正确）。
+            onSendSuperEmoji = onSendSuperEmoji,
+            onSendSystemFace = onSendSystemFace,
  */
 internal fun mergeHistoryMessages(
     older: List<ChatMessage>,
