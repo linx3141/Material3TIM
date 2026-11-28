@@ -81,8 +81,8 @@ android {
     defaultConfig {
         minSdk = androidMinSdkVersion
         targetSdk = androidTargetSdkVersion
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         applicationId = "io.github.linx3141.material3tim"
 
         resValue("string", "app_name", "Material3 TIM")
