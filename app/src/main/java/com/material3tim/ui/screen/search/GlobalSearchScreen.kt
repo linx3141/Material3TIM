@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -147,10 +148,11 @@ fun GlobalSearchScreen() {
  * 为空时回退 [ChatItem.avatarSeed] 渐变 + 群标，且组件内部已做圆形裁剪。
  */
 @Composable
-internal fun GlobalSearchChatAvatar(chat: ChatItem) {
+internal fun GlobalSearchChatAvatar(chat: ChatItem, modifier: Modifier = Modifier) {
     ChatAvatar(
         name = chat.name,
         seed = chat.avatarSeed,
+        modifier = modifier,
         size = 48.dp,
         isOnline = chat.isOnline,
         isGroup = chat.isGroup,

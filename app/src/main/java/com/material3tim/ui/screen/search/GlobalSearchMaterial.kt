@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -55,6 +55,8 @@ import com.material3tim.data.model.GlobalSearchMessage
 import com.material3tim.ui.component.ChatAvatar
 import com.material3tim.ui.component.material.ExpressiveScaffold
 import com.material3tim.ui.component.material.TonalCard
+import com.material3tim.ui.component.material.SegmentedItem
+import com.material3tim.ui.component.material.SegmentedListItem
 import com.material3tim.ui.component.material.TopBarBackButton
 import com.material3tim.ui.component.material.expressiveTopAppBarColors
 
@@ -228,7 +230,8 @@ internal fun GlobalSearchResultsMaterial(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        // 同一类别的搜索结果为一张 segmented 卡片（2dp 分段间距），与项目其它列表一致。
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         if (result.messages.isNotEmpty()) {
             item(key = "section_messages") {
@@ -237,11 +240,16 @@ internal fun GlobalSearchResultsMaterial(
                     count = result.messages.size,
                 )
             }
-            items(
+            itemsIndexed(
                 result.messages,
-                key = { "msg_${it.chatId}_${it.msgId}_${it.msgSeq}_${it.timestampMs}" },
-            ) { message ->
-                GlobalSearchMessageRowMaterial(message = message, onClick = { onOpenMessage(message) })
+                key = { _, item -> "msg_${item.chatId}_${item.msgId}_${item.msgSeq}_${item.timestampMs}" },
+            ) { index, message ->
+                GlobalSearchMessageRowMaterial(
+                    message = message,
+                    index = index,
+                    count = result.messages.size,
+                    onClick = { onOpenMessage(message) },
+                )
             }
         }
         if (result.contacts.isNotEmpty()) {
@@ -251,8 +259,13 @@ internal fun GlobalSearchResultsMaterial(
                     count = result.contacts.size,
                 )
             }
-            items(result.contacts, key = { "contact_${it.id}" }) { contact ->
-                GlobalSearchContactRowMaterial(contact = contact, onClick = { onOpenContact(contact) })
+            itemsIndexed(result.contacts, key = { _, item -> "contact_${item.id}" }) { index, contact ->
+                GlobalSearchContactRowMaterial(
+                    contact = contact,
+                    index = index,
+                    count = result.contacts.size,
+                    onClick = { onOpenContact(contact) },
+                )
             }
         }
         if (result.groups.isNotEmpty()) {
@@ -262,8 +275,13 @@ internal fun GlobalSearchResultsMaterial(
                     count = result.groups.size,
                 )
             }
-            items(result.groups, key = { "group_${it.id}" }) { group ->
-                GlobalSearchGroupRowMaterial(group = group, onClick = { onOpenGroup(group) })
+            itemsIndexed(result.groups, key = { _, item -> "group_${item.id}" }) { index, group ->
+                GlobalSearchGroupRowMaterial(
+                    group = group,
+                    index = index,
+                    count = result.groups.size,
+                    onClick = { onOpenGroup(group) },
+                )
             }
         }
     }
@@ -288,26 +306,34 @@ private fun GlobalSearchSectionHeaderMaterial(text: String, count: Int) {
 @Composable
 private fun GlobalSearchMessageRowMaterial(
     message: GlobalSearchMessage,
+    index: Int,
+    count: Int,
     onClick: () -> Unit,
 ) {
-    TonalCard(
-        containerColor = MaterialTheme.colorScheme.surfaceBright,
-        onClick = onClick,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ChatAvatar(
-                name = message.chatName,
-                seed = message.chatName.hashCode(),
-                size = 48.dp,
-                isGroup = message.isGroup,
+    val trailing: (@Composable () -> Unit)? = if (message.timeLabel.isNotBlank()) {
+        {
+            Text(
+                text = message.timeLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
+        }
+    } else {
+        null
+    }
+    SegmentedItem(index = index, count = count) {
+        SegmentedListItem(
+            onClick = onClick,
+            leadingContent = {
+                ChatAvatar(
+                    name = message.chatName,
+                    seed = message.chatName.hashCode(),
+                    size = 44.dp,
+                    isGroup = message.isGroup,
+                )
+            },
+            headlineContent = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = message.chatName,
@@ -323,67 +349,70 @@ private fun GlobalSearchMessageRowMaterial(
                             text = stringResource(R.string.global_search_tag_group),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .padding(horizontal = 6.dp, vertical = 1.dp),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
                         )
                     }
                 }
-                if (message.senderName.isNotBlank()) {
+            },
+            supportingContent = {
+                Column {
+                    if (message.senderName.isNotBlank()) {
+                        Text(
+                            text = message.senderName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
-                        text = message.senderName,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
+                        text = message.preview,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = message.preview,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (message.timeLabel.isNotBlank()) {
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = message.timeLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-        }
+            },
+            trailingContent = trailing,
+        )
     }
 }
 
 @Composable
 private fun GlobalSearchContactRowMaterial(
     contact: ContactItem,
+    index: Int,
+    count: Int,
     onClick: () -> Unit,
 ) {
     val secondary = contactSearchSecondary(contact)
-    TonalCard(
-        containerColor = MaterialTheme.colorScheme.surfaceBright,
-        onClick = onClick,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ChatAvatar(
-                name = contact.name,
-                seed = contact.avatarSeed,
-                size = 44.dp,
-                isOnline = contact.isOnline,
-                avatarPath = contact.avatarPath,
+    val supporting: (@Composable () -> Unit)? = if (secondary.isNotBlank()) {
+        {
+            Text(
+                text = secondary,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
+        }
+    } else {
+        null
+    }
+    SegmentedItem(index = index, count = count) {
+        SegmentedListItem(
+            onClick = onClick,
+            leadingContent = {
+                ChatAvatar(
+                    name = contact.name,
+                    seed = contact.avatarSeed,
+                    size = 44.dp,
+                    isOnline = contact.isOnline,
+                    avatarPath = contact.avatarPath,
+                )
+            },
+            headlineContent = {
                 Text(
                     text = contact.name,
                     style = MaterialTheme.typography.titleSmall,
@@ -391,40 +420,32 @@ private fun GlobalSearchContactRowMaterial(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (secondary.isNotBlank()) {
-                    Text(
-                        text = secondary,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
+            },
+            supportingContent = supporting,
+        )
     }
 }
 
 @Composable
 private fun GlobalSearchGroupRowMaterial(
     group: ChatItem,
+    index: Int,
+    count: Int,
     onClick: () -> Unit,
 ) {
     val groupCode = groupCodeOfChatIdForSearch(group.id)
-    TonalCard(
-        containerColor = MaterialTheme.colorScheme.surfaceBright,
-        onClick = onClick,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // 与消息列表一致的群头像：avatarPath（真实群头像）优先，avatarSeed 渐变回退。
-            GlobalSearchChatAvatar(chat = group)
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
+    val secondary = buildString {
+        append(stringResource(R.string.chat_member_count, group.memberCount))
+        if (groupCode.isNotBlank()) {
+            append(" · ")
+            append(groupCode)
+        }
+    }
+    SegmentedItem(index = index, count = count) {
+        SegmentedListItem(
+            onClick = onClick,
+            leadingContent = { GlobalSearchChatAvatar(chat = group, modifier = Modifier.size(44.dp)) },
+            headlineContent = {
                 Text(
                     text = group.name,
                     style = MaterialTheme.typography.titleSmall,
@@ -432,13 +453,8 @@ private fun GlobalSearchGroupRowMaterial(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val secondary = buildString {
-                    append(stringResource(R.string.chat_member_count, group.memberCount))
-                    if (groupCode.isNotBlank()) {
-                        append(" · ")
-                        append(groupCode)
-                    }
-                }
+            },
+            supportingContent = {
                 Text(
                     text = secondary,
                     style = MaterialTheme.typography.labelSmall,
@@ -446,8 +462,8 @@ private fun GlobalSearchGroupRowMaterial(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-        }
+            },
+        )
     }
 }
 
