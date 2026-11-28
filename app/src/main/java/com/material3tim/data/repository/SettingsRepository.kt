@@ -19,6 +19,8 @@ interface SettingsRepository {
     var enableBlur: Boolean
     var enableFloatingBottomBar: Boolean
     var enableFloatingBottomBarBlur: Boolean
+    /** Launcher3 微件页同款可滚动悬浮底栏（Material3 FloatingToolbar 风格）。 */
+    var enableLauncherFloatingToolbar: Boolean
     var enableNavigationBadge: Boolean
     /** 是否显示顶部栏（Miuix 页面）。 */
     var showTopAppBar: Boolean

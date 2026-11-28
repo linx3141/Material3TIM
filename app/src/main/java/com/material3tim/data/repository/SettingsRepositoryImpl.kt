@@ -64,6 +64,10 @@ class SettingsRepositoryImpl : SettingsRepository {
         get() = prefs.getBoolean("enable_floating_bottom_bar_blur", false)
         set(value) = prefs.edit { putBoolean("enable_floating_bottom_bar_blur", value) }
 
+    override var enableLauncherFloatingToolbar: Boolean
+        get() = prefs.getBoolean("enable_launcher_floating_toolbar", false)
+        set(value) = prefs.edit { putBoolean("enable_launcher_floating_toolbar", value) }
+
     override var enableNavigationBadge: Boolean
         get() = prefs.getBoolean("enable_navigation_badge", true)
         set(value) = prefs.edit { putBoolean("enable_navigation_badge", value) }
@@ -119,6 +123,7 @@ val UI_SETTINGS_KEYS = setOf(
     "enable_blur",
     "enable_floating_bottom_bar",
     "enable_floating_bottom_bar_blur",
+    "enable_launcher_floating_toolbar",
     "enable_navigation_badge",
     "show_top_app_bar",
     "top_app_bar_style",

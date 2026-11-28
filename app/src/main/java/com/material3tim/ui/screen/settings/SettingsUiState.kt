@@ -19,6 +19,8 @@ data class SettingsUiState(
     val enableBlur: Boolean = true,
     val enableFloatingBottomBar: Boolean = false,
     val enableFloatingBottomBarBlur: Boolean = false,
+    /** Launcher3 微件页同款悬浮底栏。 */
+    val enableLauncherFloatingToolbar: Boolean = false,
     val enableNavigationBadge: Boolean = true,
     /** 是否显示顶栏（Miuix 页面通用）。 */
     val showTopAppBar: Boolean = true,

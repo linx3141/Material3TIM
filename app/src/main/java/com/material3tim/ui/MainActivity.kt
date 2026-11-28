@@ -60,6 +60,7 @@ import com.material3tim.data.repository.ChatRepository
 import com.material3tim.data.repository.LiveChats
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.ui.component.bottombar.BottomBar
+import com.material3tim.ui.component.bottombar.LauncherFloatingBottomBar
 import com.material3tim.ui.component.bottombar.MainPagerState
 import com.material3tim.ui.component.bottombar.NavigationBadgeState
 import com.material3tim.ui.component.bottombar.SideRail
@@ -91,6 +92,7 @@ import com.material3tim.ui.theme.LocalColorMode
 import com.material3tim.ui.theme.LocalEnableBlur
 import com.material3tim.ui.theme.LocalEnableFloatingBottomBar
 import com.material3tim.ui.theme.LocalEnableFloatingBottomBarBlur
+import com.material3tim.ui.theme.LocalEnableLauncherFloatingToolbar
 import com.material3tim.ui.theme.LocalEnableNavigationBadge
 import com.material3tim.ui.theme.LocalShowNavigationBar
 import com.material3tim.ui.theme.M3TimTheme
@@ -185,11 +187,15 @@ fun MainScreen(
     val enableBlur = LocalEnableBlur.current
     val enableFloatingBottomBar = LocalEnableFloatingBottomBar.current
     val enableFloatingBottomBarBlur = LocalEnableFloatingBottomBarBlur.current
+    // Launcher3 悬浮底栏是 M3E 专属（Miuix 使用自己的底栏体系）。
+    val enableLauncherFloatingToolbar =
+        LocalEnableLauncherFloatingToolbar.current && LocalUiMode.current == UiMode.Material
     val uiMode = LocalUiMode.current
     // 「显示底栏」关闭：底栏和宽屏侧栏都不渲染（内容 bottom padding 由 Scaffold insets 自然给出）。
     // 该设置只属于 Miuix 设置页（M3E 保持自己的底栏不变，避免切到 M3E 后无法从 M3E 设置页改回）。
     val showNavigationBar = LocalShowNavigationBar.current || uiMode == UiMode.Material
-    val useNavigationRail = useNavigationRail(enableFloatingBottomBar) && showNavigationBar
+    val useNavigationRail = useNavigationRail(enableFloatingBottomBar) &&
+        showNavigationBar && !enableLauncherFloatingToolbar
     val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { MainPagerConfig.PAGE_COUNT })
     val mainPagerState = rememberMainPagerState(
         pagerState = pagerState,
@@ -339,15 +345,27 @@ fun MainScreen(
             // innerPadding 底部退化为系统导航栏 inset，页面内容 bottom padding 随之为 0。
             val bottomBar = @Composable {
                 if (showNavigationBar) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        BottomBar(
-                            blurBackdrop = blurBackdrop,
-                            backdrop = backdrop,
-                            navigationBadge = navigationBadge,
-                            modifier = Modifier.align(Alignment.BottomCenter),
-                        )
+                    if (enableLauncherFloatingToolbar) {
+                        // Launcher3 微件页同款可滚动悬浮底栏（Material3 FloatingToolbar 风格）。
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            LauncherFloatingBottomBar(
+                                navigationBadge = navigationBadge,
+                                selectedPage = mainPagerState.selectedPage,
+                                onSelectPage = { mainPagerState.animateToPage(it) },
+                                modifier = Modifier.align(Alignment.BottomCenter),
+                            )
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            BottomBar(
+                                blurBackdrop = blurBackdrop,
+                                backdrop = backdrop,
+                                navigationBadge = navigationBadge,
+                                modifier = Modifier.align(Alignment.BottomCenter),
+                            )
+                        }
                     }
                 }
             }

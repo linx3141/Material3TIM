@@ -44,6 +44,7 @@ class SettingsViewModel(
                     enableBlur = repo.enableBlur,
                     enableFloatingBottomBar = repo.enableFloatingBottomBar,
                     enableFloatingBottomBarBlur = repo.enableFloatingBottomBarBlur,
+                    enableLauncherFloatingToolbar = repo.enableLauncherFloatingToolbar,
                     enableNavigationBadge = repo.enableNavigationBadge,
                     showTopAppBar = repo.showTopAppBar,
                     enableDoubleTapPlusOne = repo.enableDoubleTapPlusOne,
@@ -159,6 +160,11 @@ class SettingsViewModel(
     fun setEnableBlur(enabled: Boolean) {
         repo.enableBlur = enabled
         _uiState.update { it.copy(enableBlur = enabled) }
+    }
+
+    fun setEnableLauncherFloatingToolbar(enabled: Boolean) {
+        repo.enableLauncherFloatingToolbar = enabled
+        _uiState.update { it.copy(enableLauncherFloatingToolbar = enabled) }
     }
 
     fun setEnableFloatingBottomBar(enabled: Boolean) {

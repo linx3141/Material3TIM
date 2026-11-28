@@ -11,6 +11,7 @@ data class MainActivityUiState(
     val enableBlur: Boolean,
     val enableFloatingBottomBar: Boolean,
     val enableFloatingBottomBarBlur: Boolean,
+    val enableLauncherFloatingToolbar: Boolean,
     val enableNavigationBadge: Boolean,
     val showTopAppBar: Boolean,
     val topAppBarStyle: Int,

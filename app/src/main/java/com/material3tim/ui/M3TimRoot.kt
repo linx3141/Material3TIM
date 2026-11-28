@@ -105,6 +105,7 @@ import com.material3tim.ui.theme.LocalEnableBlur
 import com.material3tim.ui.theme.LocalEnableFloatingBottomBar
 import com.material3tim.ui.theme.LocalEnableFloatingBottomBarBlur
 import com.material3tim.ui.theme.LocalEnableNavigationBadge
+import com.material3tim.ui.theme.LocalEnableLauncherFloatingToolbar
 import com.material3tim.ui.theme.LocalShowNavigationBar
 import com.material3tim.ui.theme.LocalShowTopAppBar
 import com.material3tim.ui.theme.LocalTopAppBarStyle
@@ -204,6 +205,7 @@ fun M3TimRoot(
             LocalEnableFloatingBottomBar provides uiState.enableFloatingBottomBar,
             LocalEnableFloatingBottomBarBlur provides uiState.enableFloatingBottomBarBlur,
             LocalEnableNavigationBadge provides uiState.enableNavigationBadge,
+            LocalEnableLauncherFloatingToolbar provides uiState.enableLauncherFloatingToolbar,
             LocalShowTopAppBar provides uiState.showTopAppBar,
             LocalTopAppBarStyle provides uiState.topAppBarStyle,
             LocalShowNavigationBar provides uiState.showNavigationBar,

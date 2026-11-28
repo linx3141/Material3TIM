@@ -50,6 +50,7 @@ class MainActivityViewModel(
             enableBlur = settingRepo.enableBlur,
             enableFloatingBottomBar = settingRepo.enableFloatingBottomBar,
             enableFloatingBottomBarBlur = settingRepo.enableFloatingBottomBarBlur,
+            enableLauncherFloatingToolbar = settingRepo.enableLauncherFloatingToolbar,
             enableNavigationBadge = settingRepo.enableNavigationBadge,
             showTopAppBar = settingRepo.showTopAppBar,
             topAppBarStyle = settingRepo.topAppBarStyle,

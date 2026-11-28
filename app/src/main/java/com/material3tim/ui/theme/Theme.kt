@@ -147,6 +147,9 @@ val LocalEnableFloatingBottomBar = staticCompositionLocalOf { false }
 
 val LocalEnableFloatingBottomBarBlur = staticCompositionLocalOf { false }
 
+/** Launcher3 微件页同款可滚动悬浮底栏（替代普通底栏）。 */
+val LocalEnableLauncherFloatingToolbar = staticCompositionLocalOf { false }
+
 val LocalEnableNavigationBadge = staticCompositionLocalOf { true }
 
 /** 是否显示顶栏（Miuix 页面通用；来自主题外观页「布局」分组）。 */
