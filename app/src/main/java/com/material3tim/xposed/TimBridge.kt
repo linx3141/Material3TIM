@@ -7819,6 +7819,11 @@ internal object TimBridge {
         }
         if (linkTitle.isNotBlank() && linkTitle.length <= 40) return linkTitle
         Regex("^\\[([^\\]]+)\\]").find(prompt.trim())?.groupValues?.getOrNull(1)
+            callVideo = described.callVideo,
+            superEmojiLottiePath = described.superEmojiLottiePath,
+            superEmojiImagePath = described.superEmojiImagePath,
+            superEmojiWidth = described.superEmojiWidth,
+            superEmojiHeight = described.superEmojiHeight,
             ?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
         arkText(root, "desc").takeIf { it.isNotBlank() && it.length <= 40 }?.let { return it }
         val mapped = when {
@@ -7915,6 +7920,13 @@ internal object TimBridge {
                     .take(4),
             )
         }
+        /** 通话记录：true=视频通话 */
+        val callVideo: Boolean = false,
+        /** 超级表情：Lottie JSON / 静态兜底图本地路径。 */
+        val superEmojiLottiePath: String? = null,
+        val superEmojiImagePath: String? = null,
+        val superEmojiWidth: Int = 0,
+        val superEmojiHeight: Int = 0,
         val title = source.ifBlank { "聊天记录" }
         val countFromSummary = Regex("(\\d+)\\s*条").find(summary)
             ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
@@ -8414,7 +8426,16 @@ internal object TimBridge {
             }.getOrNull()
             if (!decoded.isNullOrBlank()) return decoded
         }
-        // 2) 撤回灰条
+        // 2) 优先调用 TIM 自己的灰条解码器（群提示/好友提示/撤回/文件/屏蔽等文案与原生完全一致）。
+        //    注意 XML 灰条（subElementType=12）和本地灰条（13）在 TIM 的解码器里会返回
+        //    「暂时不支持的小灰条类型」，需要继续走下面的 XML/本地兜底。
+        decodeGrayTipWithTim(gray)?.let { return it }
+        // 3) XML 灰条：服务端把可读文案放在 XmlElement.content 的属性里，提取出来。
+        val xml = invokeGetter(gray, "getXmlElement")
+        if (xml != null) {
+            xmlGrayText(invokeGetter(xml, "getContent") as? String)?.let { return it }
+        }
+        // 4) 撤回灰条（TIM 解码器失败时兜底）
         val revoke = invokeGetter(gray, "getRevokeElement")
         if (revoke != null) {
             val wording = invokeGetter(revoke, "getWording") as? String
@@ -9088,6 +9109,20 @@ internal object TimBridge {
                 ELEMENT_TYPE_MARKET_FACE -> return describeMarketFaceElement(element, msgId)
 
                 ELEMENT_TYPE_FACE -> {
+        // 7) 本地灰条（如「以上为验证消息」）：extraJson 里通常带 text/content/wording。
+        val local = invokeGetter(gray, "getLocalGrayTipElement")
+        if (local != null) {
+            val extra = invokeGetter(local, "getExtraJson") as? String
+            extra?.takeIf { it.isNotBlank() }?.let { raw ->
+                val text = runCatching {
+                    val jsonObj = org.json.JSONObject(raw)
+                    listOf("text", "content", "wording", "summary", "tip")
+                        .firstNotNullOfOrNull { key -> jsonObj.optString(key).takeIf { it.isNotBlank() } }
+                }.getOrNull()
+                if (!text.isNullOrBlank()) return text
+                return raw.take(200)
+            }
+        }
                     val face = invokeGetter(element, "getFaceElement")
                     val faceText = (face?.let { invokeGetter(it, "getFaceText") } as? String).orEmpty()
                     val faceElementId = (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L
@@ -9098,6 +9133,45 @@ internal object TimBridge {
                         val resultId = (face?.let { invokeGetter(it, "getResultId") } as? String).orEmpty()
                         val surpriseId = (face?.let { invokeGetter(it, "getSurpriseId") } as? String).orEmpty()
                         val info = timSuperEmojiInfo(faceIndex)
+    /** 调用 TIM 自己的灰条解码器；XML/本地灰条会返回「暂时不支持」文本，调用方继续兜底。 */
+    private fun decodeGrayTipWithTim(gray: Any): String? = runCatching {
+        val cl = hostClassLoader() ?: return@runCatching null
+        val util = Class.forName("com.tencent.qqnt.graytips.msglist.GrayTipsContentUtilKt", false, cl)
+        val elementClass = Class.forName(
+            "com.tencent.qqnt.kernelpublic.nativeinterface.GrayTipElement",
+            false,
+            cl,
+        )
+        val method = util.getMethod("c", elementClass)
+        (method.invoke(null, gray) as? CharSequence)?.toString()?.trim()
+    }.getOrNull()?.takeIf { text ->
+        text.isNotBlank() && !text.contains("不支持") && !text.contains("UnSupport")
+    }
+
+    /** 从 XML 灰条的 content 中提取可读文案（属性 txt/text/summary/content，其次去标签）。 */
+    private fun xmlGrayText(content: String?): String? {
+        if (content.isNullOrBlank()) return null
+        val attrs = Regex(
+            "(?:txt|text|summary|content|title|wording)\\s*=\\s*[\"']([^\"']{1,200})[\"']",
+        ).findAll(content)
+            .map { it.groupValues[1].trim() }
+            .filter { it.isNotBlank() && !it.startsWith("http") && !it.startsWith("mqq") }
+            .distinct()
+            .toList()
+        if (attrs.isNotEmpty()) return attrs.joinToString("").take(200)
+        // 没有可读属性：去掉标签/实体，作为最后兜底。
+        val plain = content
+            .replace(Regex("<[^>]+>"), " ")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return plain.takeIf { it.isNotBlank() && !it.startsWith("http") }?.take(200)
+    }
+
                         val (lottiePath, imagePath) = superEmojiAssetPaths(
                             serverId = faceIndex,
                             packId = packId.ifBlank { info?.packId.orEmpty() },
@@ -10623,6 +10697,13 @@ internal object TimBridge {
     /** 群成员快路径：缓存优先；缺失/过期时后台 getAllMemberListV2 刷新（emit DataUpdate.MEMBERS）。 */
     private fun groupMembersFast(groupCode: Long): List<ChatMember> {
         if (groupCode == 0L) return emptyList()
+    private const val ELEMENT_TYPE_MARKDOWN = 14
+    private const val ELEMENT_TYPE_MULTI_FORWARD = 16
+    private const val ELEMENT_TYPE_AV_RECORD = 21
+    private const val ELEMENT_TYPE_ONLINE_FILE = 23
+    private const val ELEMENT_TYPE_TOFU_RECORD = 26
+    private const val ELEMENT_TYPE_FACE_BUBBLE = 27
+    private const val ELEMENT_TYPE_SHARE_LOCATION = 28
         val cached = groupMembersCache[groupCode]
         if (cached == null || perfUptime() - cached.at >= GROUP_MEMBERS_CACHE_TTL_MS) {
             scheduleGroupMembersRefresh(groupCode)
