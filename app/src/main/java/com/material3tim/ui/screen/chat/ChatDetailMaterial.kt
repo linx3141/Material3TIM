@@ -21,6 +21,7 @@ import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.foundation.layout.offset
 import java.io.File
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 
 import com.material3tim.ui.component.AnimatedOrStaticImage
 import com.material3tim.ui.component.rememberLocalImage
@@ -250,7 +251,9 @@ internal fun ChatDetailMaterial(
     LaunchedEffect(listState) {
         snapshotFlow { listState.canScrollForward }.collect { canScrollForward = it }
     }
-    // @我：只遍历「未读窗口」内的 @我 消息，从新到旧；遍历完自动隐藏。
+    // 右上角「向上箭头」跳转：把未读 @我 消息与最近会话 msgBox 事件消息
+    // （有新文件 / 有人回复我 / 群公告 / 红包等，来自 chat.previewEventSeqs）合并，
+    // 按列表位置从新到旧逐条跳转；全部跳完后按钮隐藏。
     // 进入时快照未读数（进入聊天后会被内核标记已读，之后 chat.unreadCount 不可靠）。
     val unreadCountSnapshot = remember(chat.id) { chat.unreadCount }
     val unreadAtMeIndices = remember(groupedMessages, unreadCountSnapshot) {
@@ -258,41 +261,19 @@ internal fun ChatDetailMaterial(
         val start = (groupedMessages.size - unreadWindow).coerceAtLeast(0)
         (start until groupedMessages.size).filter { groupedMessages[it].message.atMe }
     }
-    // atMeCursor：下一次跳转距未读 @我 列表末尾的偏移（0 = 最新一条）；每次跳转 +1。
-    var atMeCursor by remember(chat.id) { mutableIntStateOf(0) }
-    val hasUnreadAtMe = unreadAtMeIndices.isNotEmpty() && atMeCursor < unreadAtMeIndices.size
-    // 回到最底部按钮：手势驱动显隐（下滑累计 ≥ 一行气泡高度出现；上滑立即隐藏；底部始终隐藏）。
-    val backToBottomThresholdPx = with(LocalDensity.current) { 56.dp.roundToPx() }
-    var backToBottomGestureVisible by remember { mutableStateOf(false) }
-    var downAccumulatedPx by remember { mutableFloatStateOf(0f) }
-    val fabNestedScrollConnection = remember(backToBottomThresholdPx) {
-        object : NestedScrollConnection {
-            override fun onPostScroll(
-                consumed: Offset,
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                if (consumed.y > 0f) {
-                    // 向下拖动内容（看更早消息）：累计超过一行气泡高度后显示回底按钮。
-                    downAccumulatedPx += consumed.y
-                    if (downAccumulatedPx >= backToBottomThresholdPx) {
-                        backToBottomGestureVisible = true
-                    }
-                } else if (consumed.y < 0f) {
-                    // 向上拖动内容（看更新消息）：立即隐藏（动画负责过渡）。
-                    downAccumulatedPx = 0f
-                    backToBottomGestureVisible = false
-                }
-                return Offset.Zero
+    // msgBox 事件消息：按 seq 匹配已加载消息（事件 seq 可能有多条，按在列表里的位置排序）。
+    val eventJumpIndices = remember(groupedMessages, chat.previewEventSeqs) {
+        if (chat.previewEventSeqs.isEmpty()) {
+            emptyList()
+        } else {
+            val seqs = chat.previewEventSeqs.toHashSet()
+            groupedMessages.indices.filter { idx ->
+                groupedMessages[idx].message.seq in seqs
             }
         }
     }
-    // 回到底部（无法继续向前滚动）后隐藏按钮。
-    LaunchedEffect(canScrollForward) {
-        if (!canScrollForward) {
-            backToBottomGestureVisible = false
-            downAccumulatedPx = 0f
-        }
+    val jumpTargets = remember(unreadAtMeIndices, eventJumpIndices) {
+        (unreadAtMeIndices + eventJumpIndices).distinct().sortedDescending()
     }
     val fabScope = rememberCoroutineScope()
 
@@ -797,17 +778,15 @@ internal fun ChatDetailMaterial(
         }
         // 右下角浮动按钮层：底部距离 = 输入栏高度 + margin（与右侧 margin 相同）。
         ChatFloatingActionsMaterial(
-            bottomButtonVisible = canScrollForward && backToBottomGestureVisible,
-            atMeVisible = hasUnreadAtMe,
+            bottomButtonVisible = canScrollForward,
+            jumpVisible = hasJumpTargets,
             bottomOffsetPx = composerBarHeightPx,
             keyboardBottomInset = keyboardHeightState,
-            onAtMe = {
-                // 从最新一条未读 @我 开始，逐条向更早遍历。
-                val target = unreadAtMeIndices.getOrNull(
-                    unreadAtMeIndices.lastIndex - atMeCursor,
-                )
+            onJumpEvent = {
+                // 从最新一条（@我 或 msgBox 事件）开始，逐条向更早遍历。
+                val target = jumpTargets.getOrNull(jumpTargets.lastIndex - jumpCursor)
                 if (target != null) {
-                    atMeCursor += 1
+                    jumpCursor += 1
                     fabScope.launch { listState.animateScrollToItem(target) }
                 }
             },
@@ -896,6 +875,8 @@ internal fun ChatMessageItemMaterial(
                 onReplyQuoteClick = onReplyQuoteClick,
                 plusOne = message.chatRecordMsgId in plusOneMessageIds,
                 onFileClick = onFileClick,
+    showPlusOne: Boolean = false,
+    onPlusOne: (ChatMessage) -> Unit = {},
                 downloadingFileMsgId = downloadingFileMsgId,
                 fileDownloadProgress = fileDownloadProgress,
                 canRecallOthers = canRecallOthers,
@@ -947,6 +928,8 @@ private fun MessageRowMaterial(
             ChatAvatarSlotMaterial(
                 message = message,
                 group = group,
+    showPlusOne: Boolean = false,
+    onPlusOne: (ChatMessage) -> Unit = {},
                 trailing = false,
                 onAvatarClick = onAvatarClick,
             )
@@ -1254,6 +1237,9 @@ private fun MultiPartBubbleMaterial(
         ) {
             Column(
                 modifier = Modifier.padding(8.dp),
+        ChatMessageType.CALL -> CallBubbleMaterial(message, container, content, position)
+        ChatMessageType.SUPER_EMOJI -> SuperEmojiBubbleMaterial(message, container, content, position)
+        ChatMessageType.SYS_FACE -> SystemFaceBubbleMaterial(message, container, content, position)
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 message.parts.forEach { part ->
@@ -1298,6 +1284,95 @@ private fun MultiPartBubbleMaterial(
                                     .clickable {
                                         part.imagePath?.let {
                                         navigator.push(
+/** 「文字 + QQ 小黄脸」行内气泡：表情用 InlineTextContent 与文字同样的行高显示。 */
+@Composable
+private fun InlinePartsBubbleMaterial(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+    uriHandler: androidx.compose.ui.platform.UriHandler,
+    parts: List<ChatPart> = message.parts,
+) {
+    val annotated = remember(parts) {
+        buildAnnotatedString {
+            parts.forEachIndexed { index, part ->
+                when (part.kind) {
+                    ChatPartKind.TEXT -> append(part.text)
+                    ChatPartKind.IMAGE ->
+                        if ((part.isSystemFace && part.imagePath != null) ||
+                            part.isSuperEmoji
+                        ) {
+                            appendInlineContent(
+                                id = "face_$index",
+                                alternateText = part.faceDescription.ifBlank { "[表情]" },
+                            )
+                        } else {
+                            append("[图片]")
+                        }
+                }
+            }
+        }
+    }
+    val inlineContent = remember(parts) {
+        parts.mapIndexedNotNull { index, part ->
+            if (part.kind != ChatPartKind.IMAGE) return@mapIndexedNotNull null
+            val content: (@Composable () -> Unit)? = when {
+                part.isSystemFace && part.imagePath != null -> {
+                    {
+                        AnimatedOrStaticImage(
+                            path = part.imagePath,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                part.isSuperEmoji -> {
+                    {
+                        SuperEmojiAnimation(
+                            lottiePath = part.superEmojiLottiePath,
+                            imagePath = part.superEmojiImagePath,
+                            contentDescription = part.faceDescription,
+                            fallbackText = "🙂",
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                else -> null
+            }
+            if (content == null) {
+                null
+            } else {
+                "face_$index" to InlineTextContent(
+                    Placeholder(
+                        width = 20.sp,
+                        height = 20.sp,
+                        placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+                    ),
+                ) { content() }
+            }
+        }.toMap()
+    }
+    Surface(
+        shape = chatBubbleShape(position, message.isMe),
+        color = container,
+        contentColor = content,
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalUriHandler provides uriHandler,
+        ) {
+            Text(
+                text = annotated,
+                inlineContent = inlineContent,
+                style = MaterialTheme.typography.bodyLarge,
+                color = content,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+            )
+        }
+    }
+}
+
                                             Route.ChatImage(
                                                 imagePath = it,
                                                 chatId = message.chatId,
@@ -1649,6 +1724,99 @@ private fun VoiceBubbleMaterial(
                 maxLines = 1,
             )
         }
+/** QQ 系统小黄脸：与「文字+表情」混排完全一致的行内渲染（单独一个表情也同高）。 */
+@Composable
+private fun SystemFaceBubbleMaterial(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    InlinePartsBubbleMaterial(
+        message = message,
+        container = container,
+        content = content,
+        position = position,
+        uriHandler = remember(context) { openLinkHandler(context) },
+        parts = listOf(
+            ChatPart(
+                kind = ChatPartKind.IMAGE,
+                imagePath = message.imagePath,
+                imageWidth = 1,
+                imageHeight = 1,
+                emojiImage = true,
+                isSystemFace = true,
+            ),
+        ),
+    )
+}
+
+/** 超级表情：与混排完全一致的行内渲染（单独一个表情也同高）。 */
+@Composable
+private fun SuperEmojiBubbleMaterial(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    InlinePartsBubbleMaterial(
+        message = message,
+        container = container,
+        content = content,
+        position = position,
+        uriHandler = remember(context) { openLinkHandler(context) },
+        parts = listOf(
+            ChatPart(
+                kind = ChatPartKind.IMAGE,
+                imageWidth = 1,
+                imageHeight = 1,
+                emojiImage = true,
+                isSuperEmoji = true,
+                superEmojiLottiePath = message.superEmojiLottiePath,
+                superEmojiImagePath = message.superEmojiImagePath,
+                faceDescription = message.content,
+            ),
+        ),
+    )
+}
+
+/** 通话记录气泡：语音/视频通话图标 + TIM 原生文案（如「通话时长 01:23」「对方已取消」）。 */
+@Composable
+private fun CallBubbleMaterial(
+    message: ChatMessage,
+    container: Color,
+    content: Color,
+    position: ChatBubblePosition,
+) {
+    Surface(
+        shape = chatBubbleShape(position, message.isMe),
+        color = container,
+        contentColor = content,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = if (message.callVideo) Icons.Filled.Videocam else Icons.Filled.Call,
+                contentDescription = null,
+                tint = content.copy(alpha = 0.85f),
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = message.content.ifBlank { if (message.callVideo) "视频通话" else "语音通话" },
+                style = MaterialTheme.typography.bodyLarge,
+                color = content,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
     }
 }
 
@@ -2494,14 +2662,14 @@ private fun ChatPreviewSkeletonMaterial(isMe: Boolean) {
     }
 }
 
-/** 聊天页右下角浮动按钮层：@我（跳到最上方 @我的消息）/ 回到最底部。 */
+/** 聊天页右下角浮动按钮层：向上箭头（@我 + 事件消息，逐条向更早跳）/ 回到最底部。 */
 @Composable
 private fun ChatFloatingActionsMaterial(
     bottomButtonVisible: Boolean,
-    atMeVisible: Boolean,
+    jumpVisible: Boolean,
     bottomOffsetPx: Int,
     keyboardBottomInset: State<Dp>,
-    onAtMe: () -> Unit,
+    onJumpEvent: () -> Unit,
     onBackToBottom: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -2512,25 +2680,10 @@ private fun ChatFloatingActionsMaterial(
         modifier = modifier
             .padding(end = margin)
             .offset {
-                // 键盘 inset 在 layout 阶段读取：键盘动画每帧变化时只重排放置，不重组。
-                IntOffset(0, -(bottomOffsetPx + keyboardBottomInset.value.roundToPx() + marginPx))
-            },
-        horizontalAlignment = Alignment.End,
-        verticalArrangement = Arrangement.spacedBy(margin),
-    ) {
-        if (atMeVisible) {
-            SmallFloatingActionButton(
-                onClick = onAtMe,
-                modifier = Modifier.size(44.dp),
-                shape = CircleShape,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            ) {
-                Text(
-                    text = "@",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
+                // 底部 inset 取「导航栏高度 / 键盘高度」的较大值，保证按钮到输入框上边缘
+                // 与到屏幕右侧的间距一致（16dp）。
+                val bottomInset = maxOf(keyboardBottomInset.value, navBottomDp)
+                IntOffset(0, -(bottomOffsetPx + bottomInset.roundToPx() + marginPx))
             }
         }
         AnimatedVisibility(
@@ -2553,3 +2706,18 @@ private fun ChatFloatingActionsMaterial(
         }
     }
 }
+        AnimatedVisibility(
+            visible = jumpVisible,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .offset(y = jumpOffset),
+            enter = fadeIn() + scaleIn(initialScale = 0.85f),
+            exit = fadeOut() + scaleOut(targetScale = 0.85f),
+        ) {
+            SmallFloatingActionButton(onClick = onJumpEvent, shape = CircleShape) {
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowUp,
+                    contentDescription = stringResource(R.string.chat_jump_to_event),
+                )
+            }
+        }

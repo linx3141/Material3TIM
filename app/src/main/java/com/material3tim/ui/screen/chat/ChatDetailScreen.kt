@@ -536,6 +536,29 @@ private fun ChatDetailContent(
                 message.parts.any { part ->
                     part.kind == ChatPartKind.IMAGE && part.imagePath.isNullOrBlank()
                 } ||
+    // 「有新文件 / 有人回复我 / 群公告」等事件消息可能不在首屏 40 条里：
+    // 按最近会话给出的事件 seq 拉取附近历史，否则聊天页无法出现 ↑ 跳转按钮。
+    androidx.compose.runtime.LaunchedEffect(chat.id, chat.previewEventSeqs, initialMessagesLoaded) {
+        if (!liveMessages || !initialMessagesLoaded) return@LaunchedEffect
+        val seqs = chat.previewEventSeqs
+        if (seqs.isEmpty()) return@LaunchedEffect
+        val source = AppDataSources.messageSource ?: return@LaunchedEffect
+        val loadedSeqs = (baseMessages + olderMessages + localMessages)
+            .asSequence().mapNotNull { it.seq.takeIf { s -> s > 0L } }.toHashSet()
+        val missing = seqs.filter { it > 0L && it !in loadedSeqs }.take(3)
+        if (missing.isEmpty()) return@LaunchedEffect
+        val chunks = withContext(Dispatchers.IO) {
+            missing.mapNotNull { seq ->
+                runCatching { source.loadHistoryAround(chat.id, seq, 80) }.getOrNull()
+            }
+        }
+        if (chunks.isNotEmpty()) {
+            olderMessages = (olderMessages + chunks.flatten())
+                .distinctBy { it.chatRecordMsgId }
+                .sortedBy { it.timestampMs }
+        }
+    }
+
                     (message.type == ChatMessageType.IMAGE && message.imagePath.isNullOrBlank()) ||
                     (message.type == ChatMessageType.VIDEO && message.videoThumbPath.isNullOrBlank()) ||
                     (message.type == ChatMessageType.VOICE && message.mediaPath.isNullOrBlank()) ||

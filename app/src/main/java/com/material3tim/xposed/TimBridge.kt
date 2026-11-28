@@ -3616,14 +3616,16 @@ internal object TimBridge {
     }
 
     /**
-     * 聊天卡片提醒标签（只在 unread>0 时显示），优先级：
-     * 1) 群聊 @ 位掩码 atType（TIM NTTroopNotificationProcessor：`atType & 4` = [有人@我]，
-     *    `atType & 1` = [@全体成员]，两者同时出现时 @我 优先）；
-     * 2) `listOfSpecificEventTypeInfosInMsgBox` 取最新 msgSeq 的事件类型：
-     *    1002 ReplyMe / 1004 MyRedPacket / 1005 MyGift / 1007 QQRedPacket /
-     *    2001 NewFile / 2003 NewHomework / 2004,2005 GroupNotice；
-     * 3) `specialCareFlag != 0` -> SpecialCare；
-     * 4) 其它 null。反射失败一律 null，不崩。
+     * 聊天卡片提醒标签（只在 unread>0 时显示）+ 该会话所有 msgBox 事件消息 seq。
+     *
+     * 标签优先级（尽量贴近 TIM 原生 RecentContact 前缀；同一会话只展示一个）：
+     * 1) 群聊 @ 位掩码 atType（`atType & 4` = [有人@我]，`atType & 1` = [@全体成员]）；
+     * 2) `listOfSpecificEventTypeInfosInMsgBox` 事件：
+     *    1002 [有人回复我] / 2001 [有新文件] / 2003 [新的作业] /
+     *    2004,2005 [群公告] / 1007 [QQ红包] / 1004 [@我的红包] / 1005 [@我的礼物]；
+     * 3) `specialCareFlag != 0` -> [特别关心]。
+     * 4) 同时收集所有事件 msgInfos 的 msgSeq，供聊天页「向上箭头」按钮逐条跳转。
+     * 反射失败一律空结果，不崩。
      */
     private fun chatPreviewTag(
         info: Any,
@@ -3631,8 +3633,8 @@ internal object TimBridge {
         isGroup: Boolean,
         tagSource: Any?,
         chatId: String,
-    ): ChatPreviewTag? {
-        if (unread <= 0) return null
+    ): PreviewTagResult {
+        if (unread <= 0) return PreviewTagResult(null)
         return runCatching {
             // wrapper a() 的精简 RecentContactInfo 里 atType/listOfSpecific/specialCareFlag 是空的，
             // 优先用 recent 快照里的完整对象；快照字段缺失时再回退原对象。
@@ -3640,47 +3642,51 @@ internal object TimBridge {
             val sourceLabel = if (tagSource != null) "snapshot" else "recent"
             val atType = readTagInt(source, "getAtType")
                 .takeIf { it != 0 } ?: readTagInt(info, "getAtType")
-            val eventType = latestMsgBoxEventType(source)
-                .takeIf { it >= 0 } ?: latestMsgBoxEventType(info)
-            var tag: ChatPreviewTag? = null
-            if (isGroup) {
-                tag = when {
-                    atType and 4 != 0 -> ChatPreviewTag.AtMe
-                    atType and 1 != 0 -> ChatPreviewTag.AtAll
-                    else -> null
+            val events = msgBoxEvents(source).ifEmpty { msgBoxEvents(info) }
+            val eventTypes = events.mapTo(HashSet()) { it.first }
+            val eventSeqs = events.mapNotNull { seq ->
+                seq.second.takeIf { it > 0L }
+            }.distinct().sortedDescending()
+            val atMe = isGroup && (atType and 4 != 0)
+            val atAll = isGroup && (atType and 1 != 0)
+            val tag: ChatPreviewTag? = when {
+                // 有「有人回复我」事件时优先显示回复，而不是被 atType 的 @我 抢走
+                // （TIM 原生的回复提醒不带 @ 文本，仅 atType 也会置位）。
+                1002 in eventTypes -> ChatPreviewTag.ReplyMe
+                1005 in eventTypes -> ChatPreviewTag.MyGift
+                2003 in eventTypes -> ChatPreviewTag.NewHomework
+                atAll -> ChatPreviewTag.AtAll
+                atMe -> ChatPreviewTag.AtMe
+                2001 in eventTypes || 2000 in eventTypes || 2002 in eventTypes ->
+                    ChatPreviewTag.NewFile
+                2004 in eventTypes || 2005 in eventTypes -> ChatPreviewTag.GroupNotice
+                1007 in eventTypes -> ChatPreviewTag.QQRedPacket
+                1004 in eventTypes -> ChatPreviewTag.MyRedPacket
+                else -> {
+                    val specialCare = readTagInt(source, "getSpecialCareFlag")
+                        .takeIf { it != 0 } ?: readTagInt(info, "getSpecialCareFlag")
+                    if (specialCare != 0) ChatPreviewTag.SpecialCare else null
                 }
-            }
-            if (tag == null) {
-                tag = when (eventType) {
-                    1002 -> ChatPreviewTag.ReplyMe
-                    1004 -> ChatPreviewTag.MyRedPacket
-                    1005 -> ChatPreviewTag.MyGift
-                    1007 -> ChatPreviewTag.QQRedPacket
-                    2001 -> ChatPreviewTag.NewFile
-                    2003 -> ChatPreviewTag.NewHomework
-                    2004, 2005 -> ChatPreviewTag.GroupNotice
-                    else -> null
-                }
-            }
-            if (tag == null) {
-                val specialCare = readTagInt(source, "getSpecialCareFlag")
-                    .takeIf { it != 0 } ?: readTagInt(info, "getSpecialCareFlag")
-                if (specialCare != 0) tag = ChatPreviewTag.SpecialCare
             }
             if (tag != null && loggedChatTags.add("$chatId|$tag")) {
                 Log.i(
                     TAG,
-                    "chatTag: chatId=$chatId atType=$atType event=$eventType " +
-                        "source=$sourceLabel -> $tag",
+                    "chatTag: chatId=$chatId atType=$atType events=$eventTypes digests=$digests " +
+                        "source=$sourceLabel -> $tag jumpSeqs=$eventSeqs",
                 )
             }
-            tag
-        }.getOrNull()
+            PreviewTagResult(tag, eventSeqs)
+        }.getOrElse { PreviewTagResult(null) }
     }
 
     /** 读取标签相关 int 字段，失败返回 0（不抛异常）。 */
     private fun readTagInt(target: Any, getter: String): Int =
         runCatching { (invokeGetter(target, getter) as? Number)?.toInt() ?: 0 }.getOrDefault(0)
+    private data class PreviewTagResult(
+        val tag: ChatPreviewTag?,
+        val eventSeqs: List<Long> = emptyList(),
+    )
+
 
     /**
      * 内核 recent 快照（IKernelRecentContactService.getRecentContactListSnapShot(limit, cb)）：
@@ -3751,22 +3757,40 @@ internal object TimBridge {
     }
 
     /**
-     * 取 listOfSpecificEventTypeInfosInMsgBox 里最新的事件类型 eventTypeInMsgBox（无事件返回 -1）。
-     * 每项取 msgInfos.last() 的 msgSeq 比较；seq 相同按 TIM prefixMatcherList 的事件顺序 tie-break。
+     * 内核完整最近会话列表（IKernelRecentContactService.getRecentContactInfos(callback)）。
+     *
+     * 主列表用的 wrapper `a()` 是精简对象（atType / listOfSpecificEventTypeInfosInMsgBox 为空），
+     * 之前的 snapshot 只返回 changedList，导致大多数会话的「有新文件/有人回复我/群公告/红包」等
+     * 标签和事件 seq 拿不到。这里改用完整列表补全所有会话；失败时回退 snapshot。
+     * 阻塞等待回调，需在 IO 线程调用；结果缓存 10s。
      */
     private fun latestMsgBoxEventType(info: Any): Int {
         @Suppress("UNCHECKED_CAST")
         val events = (invokeGetter(info, "getListOfSpecificEventTypeInfosInMsgBox") as? List<Any?>)
             .orEmpty()
-        if (events.isEmpty()) return -1
-        // TIM NTTroopNotificationProcessor.prefixMatcherList 的事件顺序（seq 相同时优先级更高者在前）。
-        val typePriority = mapOf(
-            1004 to 0, 1007 to 1, 1002 to 2, 1005 to 3,
-            2004 to 4, 2005 to 5, 2003 to 6, 2001 to 7,
-        )
-        var bestSeq = -1L
-        var bestType = -1
-        var bestPriority = Int.MAX_VALUE
+        val result = LinkedHashMap<Int, String>()
+        for (event in events) {
+            event ?: continue
+            val type = (invokeGetter(event, "getEventTypeInMsgBox") as? Number)?.toInt() ?: continue
+            @Suppress("UNCHECKED_CAST")
+            val msgInfos = (invokeGetter(event, "getMsgInfos") as? List<Any?>).orEmpty()
+            val digest = msgInfos.lastOrNull()?.let { invokeGetter(it, "getHighlightDigest") as? String }
+                ?.takeIf { it.isNotBlank() }
+            if (digest != null) result[type] = digest
+        }
+        return result
+    }
+
+    /**
+     * 收集 listOfSpecificEventTypeInfosInMsgBox 的所有 (eventType, msgSeq)：
+     * 每个事件的 msgInfos 里每条消息都是一次可跳转的事件消息。
+     */
+    private fun msgBoxEvents(info: Any): List<Pair<Int, Long>> {
+        @Suppress("UNCHECKED_CAST")
+        val events = (invokeGetter(info, "getListOfSpecificEventTypeInfosInMsgBox") as? List<Any?>)
+            .orEmpty()
+        if (events.isEmpty()) return emptyList()
+        val result = ArrayList<Pair<Int, Long>>(events.size)
         for (event in events) {
             event ?: continue
             val eventType = (invokeGetter(event, "getEventTypeInMsgBox") as? Number)?.toInt() ?: continue
@@ -8428,7 +8452,13 @@ internal object TimBridge {
                 }
             }
         }
-        // 4) XML 灰条等暂不支持
+        // 8) 其他可读灰条字段兜底
+        (invokeGetter(gray, "getFeedMsgElement")?.let { invokeGetter(it, "getContent") } as? String)
+            ?.takeIf { it.isNotBlank() }?.let { return it }
+        (invokeGetter(gray, "getFileReceiptElement")?.let { invokeGetter(it, "getFileName") } as? String)
+            ?.takeIf { it.isNotBlank() }?.let { return "文件「$it」" }
+        if (invokeGetter(gray, "getEssenceElement") != null) return "该消息已被设为精华"
+        if (invokeGetter(gray, "getProclamationElement") != null) return "群公告已更新"
         return "[系统消息]"
     }
 
@@ -9057,7 +9087,138 @@ internal object TimBridge {
 
                 ELEMENT_TYPE_MARKET_FACE -> return describeMarketFaceElement(element, msgId)
 
-                ELEMENT_TYPE_FACE -> return ElementInfo(ChatMessageType.TEXT, "[表情]")
+                ELEMENT_TYPE_FACE -> {
+                    val face = invokeGetter(element, "getFaceElement")
+                    val faceText = (face?.let { invokeGetter(it, "getFaceText") } as? String).orEmpty()
+                    val faceElementId = (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L
+                    if (isSuperEmojiFace(face)) {
+                        val faceIndex = (face?.let { invokeGetter(it, "getFaceIndex") } as? Number)?.toInt() ?: 0
+                        val packId = (face?.let { invokeGetter(it, "getPackId") } as? String).orEmpty()
+                        val stickerId = (face?.let { invokeGetter(it, "getStickerId") } as? String).orEmpty()
+                        val resultId = (face?.let { invokeGetter(it, "getResultId") } as? String).orEmpty()
+                        val surpriseId = (face?.let { invokeGetter(it, "getSurpriseId") } as? String).orEmpty()
+                        val info = timSuperEmojiInfo(faceIndex)
+                        val (lottiePath, imagePath) = superEmojiAssetPaths(
+                            serverId = faceIndex,
+                            packId = packId.ifBlank { info?.packId.orEmpty() },
+                            stickerId = stickerId.ifBlank { info?.stickerId.orEmpty() },
+                            resultId = resultId,
+                            surpriseId = surpriseId,
+                        )
+                        return ElementInfo(
+                            type = ChatMessageType.SUPER_EMOJI,
+                            content = faceText.ifBlank { "超级表情" },
+                            elementId = faceElementId,
+                            superEmojiLottiePath = lottiePath,
+                            superEmojiImagePath = imagePath,
+                        )
+                    }
+                    val normalFaceIndex =
+                        (face?.let { invokeGetter(it, "getFaceIndex") } as? Number)?.toInt() ?: 0
+                    val facePath = systemFacePngPath(normalFaceIndex)
+                    if (facePath != null) {
+                        return ElementInfo(
+                            type = ChatMessageType.SYS_FACE,
+                            content = faceText.ifBlank { "[表情]" },
+                            imagePath = facePath,
+                            imageWidth = 1,
+                            imageHeight = 1,
+                            emojiImage = true,
+                            mediaPath = facePath,
+                            elementId = faceElementId,
+                        )
+                    }
+                    return ElementInfo(ChatMessageType.TEXT, faceText.ifBlank { "[表情]" })
+                }
+
+                ELEMENT_TYPE_AV_RECORD -> {
+                    // 语音/视频通话记录：AVRecordElement.text 就是原生显示文案（如「通话时长 01:23」）。
+                    val av = invokeGetter(element, "getAvRecordElement")
+                    val avElementId = (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L
+                    val mainType = (av?.let { invokeGetter(it, "getMainType") } as? Number)?.toInt() ?: 0
+                    val text = (av?.let { invokeGetter(it, "getText") } as? String).orEmpty()
+                    val isVideo = mainType == 2 || mainType == 3
+                    return ElementInfo(
+                        type = ChatMessageType.CALL,
+                        content = text.ifBlank { if (isVideo) "视频通话" else "语音通话" },
+                        elementId = avElementId,
+                        callVideo = isVideo,
+                    )
+                }
+
+                ELEMENT_TYPE_MULTI_FORWARD -> {
+                    // 合并转发（聊天记录）：MultiForwardMsgElement.xmlContent 是聊天记录 XML。
+                    val multi = invokeGetter(element, "getMultiForwardMsgElement")
+                    val multiElementId = (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L
+                    val fileName = (multi?.let { invokeGetter(it, "getFileName") } as? String)
+                        ?.takeIf { it.isNotBlank() }
+                    return ElementInfo(
+                        type = ChatMessageType.CHAT_RECORD,
+                        content = fileName ?: "聊天记录",
+                        recordTitle = fileName ?: "聊天记录",
+                        recordElementId = multiElementId,
+                        elementId = multiElementId,
+                    )
+                }
+
+                ELEMENT_TYPE_ONLINE_FILE -> {
+                    val file = invokeGetter(element, "getFileElement")
+                    val name = (file?.let { invokeGetter(it, "getFileName") } as? String) ?: "[文件]"
+                    val size = (file?.let { invokeGetter(it, "getFileSize") } as? Number)?.toLong() ?: 0L
+                    val fileElementId = (invokeGetter(element, "getElementId") as? Number)?.toLong() ?: 0L
+                    val path = (file?.let { invokeGetter(it, "getFilePath") } as? String)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: downloadedMediaByElement[fileElementId]?.takeIf { pathUsable(it) }
+                    val progress = (file?.let { invokeGetter(it, "getProgress") } as? Number)?.toInt() ?: -1
+                    val transferStatus =
+                        (file?.let { invokeGetter(it, "getTransferStatus") } as? Number)?.toInt() ?: -1
+                    return ElementInfo(
+                        type = ChatMessageType.FILE,
+                        content = name,
+                        fileSize = formatFileSize(size),
+                        mediaPath = path,
+                        elementId = fileElementId,
+                        downloadProgress = progress,
+                        transferStatus = transferStatus,
+                    )
+                }
+
+                ELEMENT_TYPE_MARKDOWN -> {
+                    // Bot/机器人 Markdown 消息：按纯文本展示（去掉常见 Markdown 标记）。
+                    val md = invokeGetter(element, "getMarkdownElement")
+                    val raw = (md?.let { invokeGetter(it, "getContent") } as? String).orEmpty()
+                    val plain = raw
+                        .replace(Regex("```[\\s\\S]*?```"), "")
+                        .replace(Regex("[#>*_`~]"), "")
+                        .trim()
+                    if (plain.isNotBlank()) {
+                        return ElementInfo(ChatMessageType.TEXT, plain.take(2000))
+                    }
+                }
+
+                ELEMENT_TYPE_FACE_BUBBLE -> {
+                    val bubble = invokeGetter(element, "getFaceBubbleElement")
+                    val summary = (bubble?.let { invokeGetter(it, "getFaceSummary") } as? String)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: (bubble?.let { invokeGetter(it, "getContent") } as? String)
+                            ?.takeIf { it.isNotBlank() }
+                    return ElementInfo(ChatMessageType.TEXT, summary ?: "[表情]")
+                }
+
+                ELEMENT_TYPE_SHARE_LOCATION -> {
+                    val loc = invokeGetter(element, "getShareLocationElement")
+                    val text = (loc?.let { invokeGetter(it, "getText") } as? String)
+                        ?.takeIf { it.isNotBlank() }
+                    return ElementInfo(ChatMessageType.ARK, text ?: "位置共享")
+                }
+
+                ELEMENT_TYPE_TOFU_RECORD -> {
+                    val tofu = invokeGetter(element, "getTofuRecordElement")
+                    val desc = tofu?.let { invokeGetter(it, "getDescriptionContent") }
+                    val title = (desc?.let { invokeGetter(it, "getTitle") } as? String)
+                        ?.takeIf { it.isNotBlank() }
+                    return ElementInfo(ChatMessageType.TEXT, title ?: "互动消息")
+                }
 
                 ELEMENT_TYPE_VIDEO -> {
                     val video = invokeGetter(element, "getVideoElement")
@@ -9159,7 +9320,30 @@ internal object TimBridge {
                     val elementType = (invokeGetter(element, "getElementType") as? Number)?.toInt()
                     if (elementType != null && elementType !in unknownElementLogged) {
                         unknownElementLogged.add(elementType)
-                        Log.w(TAG, "unsupported msg element type=$elementType")
+                        // 打印完整 MsgElement（含所有子元素字段），便于后续按真实类型补齐适配。
+                        Log.w(
+                            TAG,
+                            "unsupported msg element type=$elementType msg=$msgId " +
+                                "dump=${runCatching { element.toString() }.getOrDefault("").take(600)}",
+                        )
+                    }
+                    // 少见元素至少给一个可读占位，避免整条消息只显示「[消息]」。
+                    val readable = listOf(
+                        "getGiphyElement" to "[GIF]",
+                        "getLiveGiftElement" to "[礼物]",
+                        "getTextGiftElement" to "[礼物]",
+                        "getCalendarElement" to "[日程]",
+                        "getStructLongMsgElement" to "[长消息]",
+                        "getStructMsgElement" to "[结构化消息]",
+                        "getYoloGameResultElement" to "[游戏结果]",
+                        "getPrologueMsgElement" to "[开场白]",
+                        "getRecommendedMsgElement" to "[推荐消息]",
+                        "getTaskTopMsgElement" to "[置顶消息]",
+                    ).firstNotNullOfOrNull { (getter, label) ->
+                        if (invokeGetter(element, getter) != null) label else null
+                    }
+                    if (readable != null) {
+                        return ElementInfo(ChatMessageType.TEXT, readable)
                     }
                 }
             }
@@ -15840,6 +16024,11 @@ internal object TimBridge {
     // 加好友 / 加群 / 扫一扫 / 创建群聊（QRoute 原生页 + 内核请求）
     // ---------------------------------------------------------------------
 
+            ChatMessageType.CALL -> message.content.ifBlank {
+                if (message.callVideo) "[视频通话]" else "[语音通话]"
+            }
+            ChatMessageType.SUPER_EMOJI -> "[超级表情]"
+            ChatMessageType.SYS_FACE -> message.content.ifBlank { "[表情]" }
     /** 加好友来源：3017=条件查找（与 TIM「搜索结果点加好友」同款参数）。 */
     private const val ADD_FRIEND_SOURCE_ID = 3017
     private const val ADD_FRIEND_SOURCE_SUB_ID = 1
@@ -19381,6 +19570,98 @@ internal object TimBridge {
             pbSet(nested, "uint64_group_code", groupCode)
             pbSet(nested, "uint32_app_id", 3)
             pbSet(nested, "uint32_bus_id", 102) // 102 = 群文件 busId（0 会被服务端判 param error: bus_id）
+    /**
+     * 搜索群文件：走 TIM 自己的群文件搜索协议
+     * `GroupFileAppSvr.GetFileSearch`（SSO + tencent.im.cs.cmd0x383 ReqBody.msg_file_search_req_body），
+     * 与 TIM 原版 TroopFileSearchEngine 完全一致；结果只含文件（不含文件夹）。
+     */
+    fun searchGroupFiles(chatId: String, keyword: String, count: Int = 50): List<GroupFileEntry>? {
+        if (!isHost || keyword.isBlank()) return null
+        val groupCode = groupCodeFor(chatId)?.also {
+            Log.i(TAG, "groupFile: search chat=$chatId group=$it keyword=${keyword.take(30)}")
+        } ?: run {
+            Log.w(TAG, "groupFile: search failed (not a group / no groupCode) chat=$chatId")
+            return null
+        }
+        return try {
+            val req = newPb("tencent.im.cs.cmd0x383.cmd0x383\$ReqBody") ?: run {
+                Log.w(TAG, "groupFile: search req class missing")
+                return null
+            }
+            pbSet(req, "uint64_groupcode", groupCode)
+            pbSet(req, "uint32_app_id", 3)
+            val searchReq = pbMessage(req, "msg_file_search_req_body") ?: run {
+                Log.w(TAG, "groupFile: search req sub message missing")
+                return null
+            }
+            pbSet(
+                searchReq,
+                "bytes_key_word",
+                pbByteStringOf(keyword.toByteArray(Charsets.UTF_8)),
+            )
+            pbSet(searchReq, "uint32_count", count.coerceIn(1, 100))
+            pbSet(searchReq, "uint32_search_type", 0) // SEARCH_BY_KEY_WORD
+            pbSet(searchReq, "uint32_file_type", 0)
+            // 子消息必须显式置 hasFlag，否则 ReqBody 序列化时会被跳过。
+            pbSetHasFlag(searchReq, true)
+            val body = pbBytesOf(req) ?: run {
+                Log.w(TAG, "groupFile: search encode req failed")
+                return null
+            }
+            Log.i(TAG, "groupFile: search req bytes=${body.size} hex=${hexLowerPrefix(body, 32)}")
+            val raw = sendRawProtoRequest("GroupFileAppSvr.GetFileSearch", body, timeoutMs = 8_000L)
+                ?: run {
+                    Log.w(TAG, "groupFile: search send failed")
+                    return null
+                }
+            val rsp = pbParse("tencent.im.cs.cmd0x383.cmd0x383\$RspBody", raw) ?: run {
+                Log.w(TAG, "groupFile: search parse rsp failed")
+                return null
+            }
+            val ret = pbInt(rsp, "int32_ret_code")
+            val retMsg = pbString(rsp, "str_ret_msg")
+            val rspBody = pbMessage(rsp, "msg_file_search_rsp_body")
+            val total = rspBody?.let { pbInt(it, "uint32_total_match_count") } ?: 0
+            val rawItems = rspBody?.let { pbRepeatMessages(it, "item_list") }.orEmpty()
+            Log.i(
+                TAG,
+                "groupFile: search rsp ret=$ret msg=${retMsg.take(100)} " +
+                    "total=$total items=${rawItems.size} bytes=${raw.size}",
+            )
+            if (ret != 0) return emptyList()
+            rawItems.mapNotNull { item ->
+                item ?: return@mapNotNull null
+                val fileInfo = pbMessage(item, "file_info") ?: return@mapNotNull null
+                val fileId = pbString(fileInfo, "str_file_path")
+                val name = pbString(fileInfo, "str_file_name")
+                if (fileId.isBlank() && name.isBlank()) return@mapNotNull null
+                GroupFileEntry(
+                    fileId = fileId,
+                    parentFolderId = "",
+                    name = name,
+                    isFolder = false,
+                    fileSize = pbLong(fileInfo, "uint64_file_size"),
+                    uploaderName = byteStringBytes(
+                        pbByteString(item, "bytes_uploader_nick_name"),
+                    )?.toString(Charsets.UTF_8).orEmpty(),
+                    uploadTime = pbLong(fileInfo, "uint32_upload_time"),
+                    downloadTimes = pbInt(fileInfo, "uint32_download_times"),
+                    localPath = pbString(fileInfo, "str_local_path").takeIf { it.isNotBlank() },
+                    md5 = pbBytes(fileInfo, "bytes_md5")?.let { hexLower(it) }.orEmpty(),
+                    busId = pbInt(fileInfo, "uint32_bus_id"),
+                    deadTime = pbInt(fileInfo, "uint32_dead_time"),
+                )
+            }.sortedByDescending { it.uploadTime }
+        } catch (t: Throwable) {
+            Log.w(
+                TAG,
+                "groupFile: search failed keyword=${keyword.take(30)}: " +
+                    "${t.javaClass.simpleName} ${t.message}",
+            )
+            null
+        }
+    }
+
             pbSet(nested, "uint32_entrance", 4) // 4=文件页上传（AIO 是 5）
             pbSet(nested, "str_parent_folder_id", parentFolderId.ifBlank { "/" })
             pbSet(nested, "str_file_name", displayName)
