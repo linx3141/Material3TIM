@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -30,15 +31,18 @@ import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -61,6 +65,7 @@ import com.material3tim.ui.component.material.ExpressiveConfirmDialog
 import com.material3tim.ui.component.material.ExpressiveInputDialog
 import com.material3tim.ui.component.material.ExpressiveListDialog
 import com.material3tim.ui.component.material.ExpressiveScaffold
+import com.material3tim.ui.component.material.SearchAppBar
 import com.material3tim.ui.component.material.SegmentedColumn
 import com.material3tim.ui.component.material.SegmentedListItem
 import com.material3tim.ui.component.material.TopBarBackButton
@@ -75,16 +80,23 @@ internal fun GroupFilesMaterial(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onPickUpload: () -> Unit,
+    onOpenFolder: (GroupFileEntry) -> Unit = {},
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
     ExpressiveScaffold(
         topBar = {
-            TopAppBar(
+            // 与首页消息列表完全同款：SearchAppBar（标题 + 胶囊搜索栏 + 展开搜索层）。
+            SearchAppBar(
                 title = {
                     Text(
                         text = stringResource(R.string.group_files_title),
                         style = MaterialTheme.typography.titleLarge,
                     )
                 },
+                searchText = state.searchQuery,
+                onSearchTextChange = state::updateSearchQuery,
+                onClearClick = { state.updateSearchQuery("") },
+                snackbarHostState = snackbarHostState,
                 navigationIcon = {
                     TopBarBackButton(
                         onClick = onBack,
@@ -125,10 +137,26 @@ internal fun GroupFilesMaterial(
                         }
                     }
                 },
-                colors = expressiveTopAppBarColors(),
-                windowInsets = WindowInsets.safeDrawing.only(
-                    WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
-                ),
+                alwaysCollapsedTopBar = true,
+                defaultContent = { _, _ ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(bottom = 16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.group_files_search_hint),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                searchContent = { bottomPadding, _ ->
+                    GroupFilesSearchContentMaterial(
+                        state = state,
+                        bottomPadding = bottomPadding,
+                    )
+                },
             )
         },
         bottomBar = {
@@ -155,7 +183,8 @@ internal fun GroupFilesMaterial(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        // M3E Expressive loading（变形状）；之前这里还残留旧的圆形线条 spinner。
+                        ContainedLoadingIndicator(modifier = Modifier.size(48.dp))
                     }
                     state.error != null && state.entries.isEmpty() -> GroupFilesErrorMaterial(
                         message = state.error.orEmpty(),
@@ -176,7 +205,11 @@ internal fun GroupFilesMaterial(
                                 ) {
                                     state.folders.forEach { entry ->
                                         item(key = "folder_${state.entryKey(entry)}") {
-                                            GroupFilesFolderRowMaterial(state = state, entry = entry)
+                                            GroupFilesFolderRowMaterial(
+                                                state = state,
+                                                entry = entry,
+                                                onClick = { onOpenFolder(entry) },
+                                            )
                                         }
                                     }
                                 }
@@ -207,10 +240,7 @@ internal fun GroupFilesMaterial(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     if (state.loadingMore) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(22.dp),
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
+                                        ContainedLoadingIndicator(modifier = Modifier.size(24.dp))
                                     }
                                 }
                             }
@@ -233,6 +263,102 @@ internal fun GroupFilesMaterial(
     GroupFilesDialogsMaterial(state = state)
 }
 
+/** 群文件搜索栏：与首页消息列表顶部搜索胶囊同款（圆角 surfaceContainerHighest + 搜索图标）。 */
+@Composable
+private fun GroupFilesSearchBarMaterial(
+    query: String,
+    onQueryChange: (String) -> Unit,
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(50),
+        color = colorScheme.surfaceContainerHighest,
+        contentColor = colorScheme.onSurface,
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 14.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = null,
+                tint = colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+            androidx.compose.foundation.text.BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = colorScheme.onSurface),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(colorScheme.primary),
+                decorationBox = { innerTextField ->
+                    if (query.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.group_files_search_hint),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    innerTextField()
+                },
+            )
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = null,
+                        tint = colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 群文件搜索：结果按文件行样式显示（点击同样下载/打开）。 */
+@Composable
+private fun GroupFilesSearchContentMaterial(
+    state: GroupFilesState,
+    bottomPadding: androidx.compose.ui.unit.Dp = 0.dp,
+) {
+    when {
+        state.searchLoading && state.searchResults.isEmpty() -> Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            ContainedLoadingIndicator(modifier = Modifier.size(48.dp))
+        }
+        state.searchError != null && state.searchResults.isEmpty() -> GroupFilesErrorMaterial(
+            message = state.searchError.orEmpty(),
+            onRetry = { state.updateSearchQuery(state.searchQuery) },
+        )
+        state.searchResults.isEmpty() -> GroupFilesEmptyText(
+            text = stringResource(R.string.group_files_search_empty),
+        )
+        else -> LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 4.dp,
+                bottom = 24.dp + bottomPadding,
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(state.searchResults, key = { "search_${state.entryKey(it)}" }) { entry ->
+                GroupFilesFileRowMaterial(state = state, entry = entry)
+            }
+        }
+    }
+}
+
 @Composable
 private fun GroupFilesBreadcrumbMaterial(state: GroupFilesState, onBack: () -> Unit) {
     Row(
@@ -251,7 +377,7 @@ private fun GroupFilesBreadcrumbMaterial(state: GroupFilesState, onBack: () -> U
                 .weight(1f)
                 .then(
                     if (state.canGoUp) {
-                        Modifier.clickable { state.goUp() }
+                        Modifier.clickable { onBack() }
                     } else {
                         Modifier
                     },
@@ -296,7 +422,11 @@ private fun GroupFilesErrorMaterial(message: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun GroupFilesFolderRowMaterial(state: GroupFilesState, entry: GroupFileEntry) {
+private fun GroupFilesFolderRowMaterial(
+    state: GroupFilesState,
+    entry: GroupFileEntry,
+    onClick: () -> Unit = {},
+) {
     val leading: @Composable () -> Unit = {
         Icon(
             imageVector = Icons.Filled.Folder,
@@ -343,7 +473,7 @@ private fun GroupFilesFolderRowMaterial(state: GroupFilesState, entry: GroupFile
         )
     } else {
         SegmentedListItem(
-            onClick = { state.openFolder(entry) },
+            onClick = onClick,
             leadingContent = leading,
             headlineContent = headline,
             supportingContent = supporting,

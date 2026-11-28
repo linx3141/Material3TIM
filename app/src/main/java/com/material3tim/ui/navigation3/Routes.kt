@@ -70,7 +70,12 @@ sealed interface Route : NavKey, Parcelable {
     /** 群文件页（文件/文件夹列表、下载、管理）。 */
     @Parcelize
     @Serializable
-    data class ChatFiles(val chatId: String) : Route
+    data class ChatFiles(
+        val chatId: String,
+        /** 当前打开的文件夹 id（空=根目录）。每个文件夹是一层独立页面，返回手势自然回到上一级。 */
+        val folderId: String = "",
+        val folderName: String = "",
+    ) : Route
 
     @Parcelize
     @Serializable

@@ -19667,6 +19667,24 @@ internal object TimBridge {
             GroupFilePage(error = "list failed: ${t.javaClass.simpleName} ${t.message}")
         }
     }
+    /** 目录 id 归一化：空 / "/" 都视为根目录。 */
+    private fun groupFolderKey(folderId: String): String =
+        folderId.ifBlank { "/" }
+
+    /**
+     * 判断一批条目是否真的属于请求的目录：
+     * TIM 的部分 filter/reqFrom 组合在文件夹为空时会忽略 folderId 返回**根目录/父目录**内容，
+     * 必须过滤掉，否则空文件夹会显示上层目录的其它文件。
+     */
+    private fun entriesBelongToFolder(
+        entries: List<GroupFileEntry>,
+        requestedFolderId: String,
+    ): Boolean {
+        if (entries.isEmpty()) return true
+        val requested = groupFolderKey(requestedFolderId)
+        return entries.all { groupFolderKey(it.parentFolderId) == requested }
+    }
+
 
     /** 群文件管理权限：沿用群成员信息（群主/管理员）判定；列表 rsp 的 role 仅打日志辅助核对。 */
     fun canManageGroupFiles(chatId: String): Boolean {
@@ -19721,6 +19739,14 @@ internal object TimBridge {
         if (info == null || groupFileDownloadStates.isEmpty()) return
         val fileId = (invokeGetter(info, "getFileId") as? String).orEmpty()
         val fileModelId = (invokeGetter(info, "getFileModelId") as? Number)?.toLong() ?: 0L
+                if (!entriesBelongToFolder(entries, parentFolderId)) {
+                    Log.i(
+                        TAG,
+                        "groupFile: list try filter=$filterCode reqFrom=$reqFrom " +
+                            "returned wrong folder (items=${entries.size}) -> skip",
+                    )
+                    continue
+                }
         if (fileId.isBlank() && fileModelId == 0L) return
         val state = findGroupFileDownloadState(fileId, fileModelId) ?: return
         val progressRaw = (invokeGetter(info, "getFileProgress") as? Number)?.toLong() ?: 0L
@@ -19765,6 +19791,8 @@ internal object TimBridge {
                         "pct=$pct progress=$progressRaw total=$totalSize status=$status",
                 )
             }
+                        .takeIf { entriesBelongToFolder(it, parentFolderId) }
+                        .orEmpty()
         }
     }
 
@@ -19804,6 +19832,8 @@ internal object TimBridge {
             if (code !in 200..299) {
                 Log.w(TAG, "groupFile: download http status=$code url=${url.take(200)}")
                 connection.disconnect()
+                        .takeIf { entriesBelongToFolder(it, parentFolderId) }
+                        .orEmpty()
                 return null
             }
             val contentLength = connection.contentLengthLong.takeIf { it > 0L } ?: 0L
@@ -19819,6 +19849,11 @@ internal object TimBridge {
                         output.write(buffer, 0, read)
                         downloaded += read
                         val pct = if (totalSize > 0L) {
+            Log.i(
+                TAG,
+                "groupFile: list folder=${requestFolderId} group=$groupCode " +
+                    "entries=${bestEntries.size}",
+            )
                             (downloaded * 100L / totalSize).toInt().coerceIn(0, 100)
                         } else {
                             0
@@ -22094,6 +22129,12 @@ internal class TimChatSource : ChatSource {
 /** 宿主里的真实好友/联系人数据源。 */
 internal class TimContactSource : ContactSource {
     override fun loadContacts(): List<ContactItem>? = TimBridge.loadContacts()
+
+    override fun searchGroupFiles(
+        chatId: String,
+        keyword: String,
+        count: Int,
+    ): List<GroupFileEntry>? = TimBridge.searchGroupFiles(chatId, keyword, count)
 
     override fun loadContactDetail(contactId: String): ContactDetail? =
         TimBridge.loadContactDetail(contactId)

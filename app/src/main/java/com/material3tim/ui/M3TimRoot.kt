@@ -293,7 +293,11 @@ fun M3TimRoot(
                             ChatNoticeDetailScreen(key.chatId, key.noticeId)
                         }
                         entry<Route.ChatFiles>(swipeDismiss = swipeDismiss) { key ->
-                            GroupFilesScreen(key.chatId)
+                            GroupFilesScreen(
+                                chatId = key.chatId,
+                                initialFolderId = key.folderId,
+                                initialFolderName = key.folderName,
+                            )
                         }
                         entry<Route.ChatRecord>(swipeDismiss = swipeDismiss) { key ->
                             ChatRecordScreen(

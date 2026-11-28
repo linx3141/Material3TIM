@@ -3,6 +3,7 @@ package com.material3tim.ui.screen.chat
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
@@ -35,11 +36,13 @@ import com.material3tim.data.source.GroupFileSource
 import com.material3tim.ui.LocalUiMode
 import com.material3tim.ui.UiMode
 import com.material3tim.ui.navigation3.LocalNavigator
+import com.material3tim.ui.navigation3.Route
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -72,13 +75,24 @@ internal class GroupFilesState(
     val chatId: String,
     private val scope: CoroutineScope,
     private val rootLabel: String,
+    initialFolderId: String = "",
+    initialFolderName: String = "",
 ) {
     private val source: GroupFileSource? = AppDataSources.groupFileSource
 
     val entries = mutableStateListOf<GroupFileEntry>()
     val downloads = mutableStateMapOf<String, GroupFileDownload>()
 
-    var pathStack by mutableStateOf(listOf(GroupFilesFolder("", rootLabel)))
+    var pathStack by mutableStateOf(
+        if (initialFolderId.isBlank()) {
+            listOf(GroupFilesFolder("", rootLabel))
+        } else {
+            listOf(
+                GroupFilesFolder("", rootLabel),
+                GroupFilesFolder(initialFolderId, initialFolderName),
+            )
+        },
+    )
         private set
     var loading by mutableStateOf(false)
         private set
@@ -99,6 +113,19 @@ internal class GroupFilesState(
     var dialog by mutableStateOf<GroupFilesDialog?>(null)
     var busy by mutableStateOf(false)
         private set
+
+    // 搜索（文件名关键字）：搜索结果替换当前列表显示，不改变目录栈。
+    var searchMode by mutableStateOf(false)
+        private set
+    var searchQuery by mutableStateOf("")
+        private set
+    var searchResults by mutableStateOf<List<GroupFileEntry>>(emptyList())
+        private set
+    var searchLoading by mutableStateOf(false)
+        private set
+    var searchError by mutableStateOf<String?>(null)
+        private set
+    private var searchJob: Job? = null
 
     private var nextIndex = 0
     private var requestId = 0
@@ -165,12 +192,19 @@ internal class GroupFilesState(
                 }.getOrNull()
             }
             if (currentRequest != requestId) return@launch
+            // 目录已经切换（理论上 requestId 已挡住，这里再做一次防御）：丢弃旧目录的结果。
+            if (folderId != currentFolderId) return@launch
             if (page == null) {
                 if (!append) {
                     entries.clear()
                     error = context.getString(R.string.group_files_load_failed)
                 }
             } else {
+                Log.i(
+                    "Material3Tim",
+                    "groupFile: folder loaded folderId=${folderId.ifBlank { "/" }} " +
+                        "entries=${page.entries.size} isEnd=${page.isEnd}",
+                )
                 val merged = if (append) entries + page.entries else page.entries
                 entries.clear()
                 entries.addAll(
@@ -193,6 +227,18 @@ internal class GroupFilesState(
 
     fun openFolder(entry: GroupFileEntry) {
         if (!entry.isFolder) return
+        // 加载中/连续快速点击时忽略：否则会叠出 A/A/A 目录栈。
+        if (loading || loadingMore) return
+        Log.i(
+            "Material3Tim",
+            "groupFile: openFolder name=${entry.name} folderId=${entry.folderId} " +
+                "parent=${entry.parentFolderId} fileCount=${entry.fileCount}",
+        )
+        // 立即清空旧目录内容并进入 loading，避免打开空目录时短暂显示父目录文件。
+        entries.clear()
+        nextIndex = 0
+        isEnd = true
+        allFileCount = 0
         pathStack = pathStack + GroupFilesFolder(entry.folderId, entry.name)
         exitManageMode()
         refresh()
@@ -200,9 +246,72 @@ internal class GroupFilesState(
 
     fun goUp() {
         if (!canGoUp) return
+        if (loading || loadingMore) return
+        entries.clear()
+        nextIndex = 0
+        isEnd = true
+        allFileCount = 0
         pathStack = pathStack.dropLast(1)
         exitManageMode()
         refresh()
+    }
+
+    // ------------------------------------------------------------------
+    // 搜索
+    // ------------------------------------------------------------------
+
+    fun openSearch() {
+        searchMode = true
+        searchQuery = ""
+        searchResults = emptyList()
+        searchError = null
+        searchLoading = false
+    }
+
+    fun closeSearch() {
+        searchJob?.cancel()
+        searchMode = false
+        searchQuery = ""
+        searchResults = emptyList()
+        searchError = null
+        searchLoading = false
+    }
+
+    fun updateSearchQuery(query: String) {
+        searchQuery = query
+        searchMode = query.isNotBlank()
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            searchResults = emptyList()
+            searchError = null
+            searchLoading = false
+            return
+        }
+        val src = source
+        if (src == null) {
+            searchResults = emptyList()
+            searchError = context.getString(R.string.group_files_host_only)
+            searchLoading = false
+            return
+        }
+        searchLoading = true
+        searchError = null
+        val keyword = query.trim()
+        searchJob = scope.launch {
+            delay(300) // 防抖：连续输入只在停止后查一次
+            val results = withContext(Dispatchers.IO) {
+                runCatching { src.searchGroupFiles(chatId, keyword) }.getOrNull()
+            }
+            // 查询期间用户又改了关键字/关闭搜索：丢弃旧结果。
+            if (searchQuery.trim() != keyword || !searchMode) return@launch
+            searchResults = results.orEmpty()
+            searchError = if (results == null) {
+                context.getString(R.string.group_files_search_failed)
+            } else {
+                null
+            }
+            searchLoading = false
+        }
     }
 
     fun toggleManageMode() {
@@ -422,24 +531,39 @@ internal class GroupFilesState(
  * 群文件页入口：按 [LocalUiMode] 分发 M3E / Miuix 两套实现，共享同一个 [GroupFilesState]。
  */
 @Composable
-fun GroupFilesScreen(chatId: String) {
+fun GroupFilesScreen(
+    chatId: String,
+    initialFolderId: String = "",
+    initialFolderName: String = "",
+) {
     val context = LocalContext.current
     val navigator = LocalNavigator.current
     val scope = rememberCoroutineScope()
     val rootLabel = androidx.compose.ui.res.stringResource(R.string.group_files_all_files)
-    val state = remember(chatId) {
-        GroupFilesState(context, chatId, scope, rootLabel)
+    val state = remember(chatId, initialFolderId) {
+        GroupFilesState(
+            context = context,
+            chatId = chatId,
+            scope = scope,
+            rootLabel = rootLabel,
+            initialFolderId = initialFolderId,
+            initialFolderName = initialFolderName,
+        )
     }
     val uploadPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
     ) { uri ->
         uri?.let(state::upload)
     }
-    LaunchedEffect(chatId) {
+    LaunchedEffect(chatId, initialFolderId) {
         state.start()
     }
-    val onBack: () -> Unit = {
-        if (state.canGoUp) state.goUp() else navigator.pop()
+    // 每个文件夹是独立页面：返回/上滑直接 pop 回上一级（根目录再 pop 回聊天页）。
+    val onBack: () -> Unit = { navigator.pop() }
+    val onOpenFolder: (GroupFileEntry) -> Unit = { entry ->
+        if (entry.isFolder) {
+            navigator.push(Route.ChatFiles(chatId, entry.folderId, entry.name))
+        }
     }
     val onPickUpload: () -> Unit = {
         uploadPicker.launch(arrayOf("*/*"))
@@ -450,12 +574,14 @@ fun GroupFilesScreen(chatId: String) {
             onBack = onBack,
             onRefresh = state::refresh,
             onPickUpload = onPickUpload,
+            onOpenFolder = onOpenFolder,
         )
         UiMode.Material -> GroupFilesMaterial(
             state = state,
             onBack = onBack,
             onRefresh = state::refresh,
             onPickUpload = onPickUpload,
+            onOpenFolder = onOpenFolder,
         )
     }
 }

@@ -22,6 +22,9 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -60,10 +63,14 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Checkbox
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.icon.basic.Search
+import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
+import top.yukonga.miuix.kmp.basic.InputField
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -86,6 +93,7 @@ internal fun GroupFilesMiuix(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onPickUpload: () -> Unit,
+    onOpenFolder: (GroupFileEntry) -> Unit = {},
 ) {
     val enableBlur = LocalEnableBlur.current
     val scrollBehavior = MiuixScrollBehavior()
@@ -164,9 +172,34 @@ internal fun GroupFilesMiuix(
                     .fillMaxSize()
                     .padding(top = innerPadding.calculateTopPadding()),
             ) {
-                GroupFilesBreadcrumbMiuix(state = state)
+                GroupFilesBreadcrumbMiuix(state = state, onBack = onBack)
+                // 与首页消息列表顶部一致的 Miuix 搜索栏（InputField 胶囊）。
+                InputField(
+                    query = state.searchQuery,
+                    onQueryChange = state::updateSearchQuery,
+                    label = stringResource(R.string.group_files_search_hint),
+                    leadingIcon = {
+                        Icon(
+                            imageVector = MiuixIcons.Basic.Search,
+                            contentDescription = null,
+                            tint = colorScheme.onSurfaceContainerHigh,
+                            modifier = Modifier
+                                .size(44.dp)
+                                .padding(start = 16.dp, end = 8.dp),
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                        .padding(top = 4.dp, bottom = 6.dp),
+                    onSearch = { },
+                    enabled = true,
+                    expanded = false,
+                    onExpandedChange = { },
+                )
                 Box(modifier = Modifier.weight(1f)) {
                     when {
+                        state.searchQuery.isNotBlank() -> GroupFilesSearchContentMiuix(state = state)
                         !state.sourceAvailable -> GroupFilesEmptyMiuix(
                             text = stringResource(R.string.group_files_host_only),
                         )
@@ -174,10 +207,10 @@ internal fun GroupFilesMiuix(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center,
                         ) {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .width(120.dp)
-                                    .height(4.dp),
+                            // Miuix 标准 loading。
+                            InfiniteProgressIndicator(
+                                modifier = Modifier.size(48.dp),
+                                size = 48.dp,
                             )
                         }
                         state.error != null && state.entries.isEmpty() -> GroupFilesErrorMiuix(
@@ -200,7 +233,11 @@ internal fun GroupFilesMiuix(
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             items(state.folders, key = { "folder_${state.entryKey(it)}" }) { entry ->
-                                GroupFilesFolderRowMiuix(state = state, entry = entry)
+                                GroupFilesFolderRowMiuix(
+                                    state = state,
+                                    entry = entry,
+                                    onClick = { onOpenFolder(entry) },
+                                )
                             }
                             items(state.files, key = { "file_${state.entryKey(it)}" }) { entry ->
                                 GroupFilesFileRowMiuix(state = state, entry = entry)
@@ -239,8 +276,45 @@ internal fun GroupFilesMiuix(
     GroupFilesDialogsMiuix(state = state, backdrop = backdrop)
 }
 
+/** 群文件搜索（Miuix）：结果按文件行样式显示。 */
 @Composable
-private fun GroupFilesBreadcrumbMiuix(state: GroupFilesState) {
+private fun GroupFilesSearchContentMiuix(state: GroupFilesState) {
+    when {
+        state.searchLoading && state.searchResults.isEmpty() -> Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            InfiniteProgressIndicator(
+                modifier = Modifier.size(48.dp),
+                size = 48.dp,
+            )
+        }
+        state.searchError != null && state.searchResults.isEmpty() -> GroupFilesErrorMiuix(
+            message = state.searchError.orEmpty(),
+            onRetry = { state.updateSearchQuery(state.searchQuery) },
+        )
+        state.searchResults.isEmpty() -> GroupFilesEmptyMiuix(
+            text = stringResource(R.string.group_files_search_empty),
+        )
+        else -> LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 12.dp,
+                end = 12.dp,
+                top = 4.dp,
+                bottom = 16.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(state.searchResults, key = { "search_${state.entryKey(it)}" }) { entry ->
+                GroupFilesFileRowMiuix(state = state, entry = entry)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupFilesBreadcrumbMiuix(state: GroupFilesState, onBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -257,7 +331,7 @@ private fun GroupFilesBreadcrumbMiuix(state: GroupFilesState) {
                 .weight(1f)
                 .then(
                     if (state.canGoUp) {
-                        Modifier.clickable { state.goUp() }
+                        Modifier.clickable { onBack() }
                     } else {
                         Modifier
                     },
@@ -296,11 +370,15 @@ private fun GroupFilesErrorMiuix(message: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun GroupFilesFolderRowMiuix(state: GroupFilesState, entry: GroupFileEntry) {
+private fun GroupFilesFolderRowMiuix(
+    state: GroupFilesState,
+    entry: GroupFileEntry,
+    onClick: () -> Unit = {},
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         onClick = {
-            if (state.manageMode) state.toggleSelect(entry) else state.openFolder(entry)
+            if (state.manageMode) state.toggleSelect(entry) else onClick()
         },
         showIndication = true,
         insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),

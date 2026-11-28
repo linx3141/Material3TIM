@@ -78,6 +78,16 @@ interface GroupFileSource {
     ): GroupFilePage? = null
 
     /**
+     * 搜索群文件（文件名关键字）；失败返回 null。阻塞，IO 线程调用。
+     * 结果可能来自群的任意文件夹（[GroupFileEntry.parentFolderId] 为 ""）。
+     */
+    fun searchGroupFiles(
+        chatId: String,
+        keyword: String,
+        count: Int = 50,
+    ): List<com.material3tim.data.model.GroupFileEntry>? = null
+
+    /**
      * 下载群文件；[onProgress] 会在下载过程中回调（可能在其他线程），完成后 [GroupFileDownload.done]=true。
      * 阻塞直到完成/失败，IO 线程调用。
      */
