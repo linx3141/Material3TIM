@@ -225,6 +225,7 @@ internal fun ChatDetailMiuix(
     onClearReply: () -> Unit = {},
     onDeleteMessage: (ChatMessage) -> Unit = {},
     onRecallMessage: (ChatMessage) -> Unit = {},
+    showTopBarAvatar: Boolean = true,
     onFileClick: (ChatMessage) -> Unit = {},
     downloadingFileMsgId: Long = 0L,
     fileDownloadProgress: Int = -1,
@@ -652,11 +653,26 @@ internal fun ChatDetailMiuix(
                                 contentDescription = stringResource(R.string.contact_audio_call),
                                 icon = MiuixIcons.Phone,
                             )
-                        }
-                        HyperTopBarIconButton(
-                            onClick = onOpenInfo,
-                            contentDescription = stringResource(R.string.chat_more_actions),
-                            icon = MiuixIcons.More,
+                        },
+                        actions = {
+                            if (!chat.isGroup) {
+                                HyperTopBarIconButton(
+                                    onClick = comingSoon,
+                                    contentDescription = stringResource(R.string.contact_audio_call),
+                                    icon = MiuixIcons.Phone,
+                                )
+                            }
+                            HyperTopBarIconButton(
+                                onClick = onOpenInfo,
+                                contentDescription = stringResource(R.string.chat_more_actions),
+                                icon = MiuixIcons.More,
+                            )
+                        },
+                    )
+                    if (showTopBarAvatar && LocalShowTopAppBar.current) {
+                        ChatTopBarTitleWithAvatarMiuix(
+                            chat = chat,
+                            subtitle = chatSubtitle(chat).orEmpty(),
                         )
                     },
                 )

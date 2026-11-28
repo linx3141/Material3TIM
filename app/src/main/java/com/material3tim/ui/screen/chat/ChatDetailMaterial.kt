@@ -202,6 +202,7 @@ internal fun ChatDetailMaterial(
     messages: List<ChatMessage>,
     composer: ChatComposerState,
     onBack: () -> Unit,
+    showTopBarAvatar: Boolean = true,
     onOpenInfo: () -> Unit,
     onSend: (String) -> Unit,
     replyTarget: ChatMessage? = null,
