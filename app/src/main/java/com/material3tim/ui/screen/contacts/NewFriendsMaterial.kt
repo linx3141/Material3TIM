@@ -154,8 +154,8 @@ fun NewFriendsMaterial(
                     if (incomingRequests.isNotEmpty()) {
                         item(key = "incoming") {
                             SegmentedColumn(title = stringResource(R.string.new_friends_incoming)) {
-                                incomingRequests.forEach { request ->
-                                    item(key = "in_${request.id}") {
+                                incomingRequests.forEachIndexed { index, request ->
+                                    item(key = "in_${index}_${request.id}") {
                                         NewFriendIncomingItemMaterial(
                                             request = request,
                                             onAccept = { onAccept(request) },
@@ -170,8 +170,8 @@ fun NewFriendsMaterial(
                     if (outgoingRequests.isNotEmpty()) {
                         item(key = "outgoing") {
                             SegmentedColumn(title = stringResource(R.string.new_friends_outgoing)) {
-                                outgoingRequests.forEach { request ->
-                                    item(key = "out_${request.id}") {
+                                outgoingRequests.forEachIndexed { index, request ->
+                                    item(key = "out_${index}_${request.id}") {
                                         NewFriendOutgoingItemMaterial(request = request)
                                     }
                                 }

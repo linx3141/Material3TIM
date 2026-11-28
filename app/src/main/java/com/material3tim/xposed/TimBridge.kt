@@ -14352,11 +14352,10 @@ internal object TimBridge {
                 emptyList()
             }
             val merged = (normalRequests + filteredRequests)
-                // uid+reqTime 去重（风控申请 uid 可能解析不到，退化为 uin）
-                .distinctBy { req ->
-                    val key = req.uid.ifBlank { req.uin.ifBlank { req.id } }
-                    key.lowercase() + ":" + req.timeMillis
-                }
+                // 先按「pending 优先 + 新申请优先」排序，再按「方向 + 用户」去重：
+                // 同一用户可能因重复申请留下多条 BuddyReq（reqTime 不同），
+                // 若只按 uid+reqTime 去重仍会出现两条相同 id 的「收到」申请，
+                // Miuix/M3E LazyColumn 的 key 就会重复并崩溃（Key "incoming:u_xxx" was already used）。
                 .sortedWith(
                     compareBy({ it.state != FriendRequestState.PENDING }, { -it.timeMillis }),
                 )
@@ -14449,6 +14448,10 @@ internal object TimBridge {
                     subType = msgNested?.let { runCatching { pbInt(it, "sub_type") }.getOrDefault(-1) } ?: -1,
                     actionCount = actionCount,
                     msgTime = runCatching { pbLong(structMsg, "msg_time") }.getOrDefault(0L),
+                .distinctBy { req ->
+                    val who = req.uid.ifBlank { req.uin.ifBlank { req.id } }.lowercase()
+                    "${req.isIncoming}:$who"
+                }
                 ),
             )
         }

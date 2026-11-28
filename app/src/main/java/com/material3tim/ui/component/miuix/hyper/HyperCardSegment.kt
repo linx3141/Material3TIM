@@ -92,7 +92,9 @@ fun LazyListScope.groupedCardItems(
     if (items.isEmpty()) return
     val lastIndex = items.lastIndex
     items.forEachIndexed { index, cardItem ->
-        item(key = "$keyPrefix:${cardItem.key}") {
+        // 加 index 兜底：调用方若传入重复 key（如同一用户多条好友申请），
+        // LazyColumn 不会再因 "Key ... was already used" 崩溃。
+        item(key = "$keyPrefix:$index:${cardItem.key}") {
             CardSegment(
                 isFirst = index == 0,
                 isLast = index == lastIndex,
