@@ -57,6 +57,7 @@ import com.material3tim.R
 import com.material3tim.data.model.ChatInfoData
 import com.material3tim.data.model.ChatItem
 import com.material3tim.data.model.ChatMessage
+import com.material3tim.data.model.DataLine
 import com.material3tim.data.model.ChatMember
 import com.material3tim.data.model.CustomEmoji
 import com.material3tim.data.model.ChatMessageType
@@ -997,7 +998,15 @@ private fun ChatDetailContent(
     }
     // 点消息头像进入统一「用户资料」页；系统消息/无发送者 uid 的消息不响应。
     val onAvatarClick: (ChatMessage) -> Unit = { message ->
-        if (message.type != ChatMessageType.SYSTEM && message.senderUid.isNotBlank()) {
+        if (chat.dataLineKind != 0) {
+            navigator.push(
+                Route.ContactDetail(
+                    contactId = "",
+                    chatId = chat.id,
+                    uid = DataLine.uid(chat.dataLineKind),
+                ),
+            )
+        } else if (message.type != ChatMessageType.SYSTEM && message.senderUid.isNotBlank()) {
             navigator.push(
                 Route.ContactDetail(
                     contactId = "",
@@ -1045,6 +1054,8 @@ private fun ChatDetailContent(
                 context.getString(R.string.chat_recall_unsupported),
                 android.widget.Toast.LENGTH_SHORT,
             ).show()
+    // DataLine 设备会话（我的手机/电脑/平板）里消息的 senderUid 可能指向别的设备，
+    // 资料页必须按「当前会话的设备类型」显示，否则会出现点我的电脑却显示我的手机。
         } else {
             scope.launch {
                 val ok = withContext(Dispatchers.IO) {
@@ -1371,7 +1382,10 @@ private fun ChatDetailContent(
             Log.d("Material3Tim", "ime: chat detail keyed chat=${chat.id}")
         }
         val chatListScrollState = remember { ChatListScrollState() }
-        CompositionLocalProvider(LocalChatListScrollState provides chatListScrollState) {
+        CompositionLocalProvider(
+            LocalChatListScrollState provides chatListScrollState,
+            LocalChatDataLineKind provides chat.dataLineKind,
+        ) {
         when (LocalUiMode.current) {
             UiMode.Miuix -> ChatDetailMiuix(
             chat = chat,
@@ -1609,6 +1623,9 @@ private fun ChatDetailPlaceholder(
                 color = color,
             )
             Spacer(Modifier.height(12.dp))
+/** 当前聊天是否是 DataLine 设备会话（0=普通；1/2/3/4 见 DataLine）。聊天消息头像据此渲染设备图标。 */
+internal val LocalChatDataLineKind = androidx.compose.runtime.staticCompositionLocalOf { 0 }
+
             if (failed) {
                 Text(
                     text = stringResource(R.string.group_files_load_failed),
@@ -1796,6 +1813,7 @@ private fun copyUriToCache(context: Context, uri: Uri, fallbackName: String): Fi
         "chat_media/${System.currentTimeMillis()}_${System.nanoTime()}",
     ).apply { mkdirs() }
     val target = File(dir, safeName)
+    chat.dataLineKind != 0 -> stringResource(R.string.chat_dataline_subtitle)
     context.contentResolver.openInputStream(uri)?.use { input ->
         target.outputStream().use { output -> input.copyTo(output) }
     } ?: return@runCatching null

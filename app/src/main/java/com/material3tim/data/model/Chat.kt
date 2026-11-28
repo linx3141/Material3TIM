@@ -54,6 +54,16 @@ data class ChatItem(
     val avatarPath: String? = null,
     /** 摘要前的提醒标签（@我 / 有新文件 / 群公告等，仅未读时由数据层给出） */
     val previewTag: ChatPreviewTag? = null,
+    /**
+     * 「我的手机 / 我的电脑 / 我的平板」这类 DataLine 设备会话：0=普通会话，
+     * 1=手机，2=电脑，3=平板；UI 据此显示设备图标/名称，而不是「QQ用户(0)」。
+     */
+    val dataLineKind: Int = 0,
+    /**
+     * 该会话所有 msgBox 事件消息的 seq（如 [有新文件]/[有人回复我]/[群公告] 等，可能多条）。
+     * 聊天页「向上箭头」按钮据此与 @我 消息合并，从新到旧逐条跳转。
+     */
+    val previewEventSeqs: List<Long> = emptyList(),
 ) {
     val displaySummary: String
         get() = if (draft != null) "[草稿] $draft" else lastMessage

@@ -17,6 +17,9 @@ import com.material3tim.data.model.ChatMessageType
 import com.material3tim.data.model.ChatPart
 import com.material3tim.data.model.ChatPartKind
 import com.material3tim.data.model.ChatPreviewTag
+import com.material3tim.data.model.SuperEmojiItem
+import com.material3tim.data.model.SystemFaceItem
+import com.material3tim.data.model.DataLine
 import com.material3tim.data.model.ContactDetail
 import com.material3tim.data.model.ContactItem
 import com.material3tim.data.model.CustomEmoji
@@ -3878,8 +3881,8 @@ internal object TimBridge {
             isTroopAssistant -> "tim_troop_assistant"
             else -> "tim_${chatType}_${if (peerUid.isNotBlank()) peerUid else peerUin.toString()}"
         }
-        val previewTag = if (isTroopAssistant) {
-            null
+        val previewTagInfo = if (isTroopAssistant || dataLineKind != 0) {
+            PreviewTagResult(null)
         } else {
             chatPreviewTag(info, unread, isGroup, tagSources[chatId], chatId)
         }
@@ -3890,8 +3893,8 @@ internal object TimBridge {
         }
         cacheContact(chatId, meta)
         // 群头像：缓存命中直接填；未命中则后台下载（loadRecentChats 不阻塞），完成后 refreshChatsSoon 回填。
-        val avatarPath = if (isTroopAssistant) {
-            null // 群助手用固定图标（UI 渲染）
+        val avatarPath = if (isTroopAssistant || dataLineKind != 0) {
+            null // 群助手/设备会话用固定图标（UI 渲染）
         } else if (isGroup) {
             scheduleGroupAvatarDownload(meta, meta.groupCode)
         } else {
@@ -3912,12 +3915,29 @@ internal object TimBridge {
             isOnline = online,
             draft = draft,
             avatarPath = avatarPath,
-            previewTag = previewTag,
+            dataLineKind = dataLineKind,
+            previewTag = previewTagInfo.tag,
+            previewEventSeqs = previewTagInfo.eventSeqs,
         )
     } catch (t: Throwable) {
         Log.w(TAG, "mapRecentContact failed: ${t.javaClass.simpleName} ${t.message}")
         null
     }
+    /** DataLine 设备会话识别统一走共享 [DataLine]。 */
+    private fun dataLineKind(peerUid: String?): Int = DataLine.kindOf(peerUid)
+
+    private fun dataLineTitle(kind: Int): String = DataLine.title(kind)
+
+    private fun loadDataLineChatInfo(chat: ChatItem): ChatInfoData = ChatInfoData(
+        chat = chat,
+        members = emptyList(),
+        notice = "",
+        // 设备会话没有 QQ 号；不要显示 peerUid 乱文字。
+        timId = "",
+        description = "跨设备文件传输",
+        memberCount = 0,
+    )
+
 
     private fun sendRemarkSafe(info: Any, memberName: String?, nickName: String?): String? {
         val remark = invokeGetter(info, "getSendRemarkName") as? String
@@ -3930,6 +3950,14 @@ internal object TimBridge {
     // 我的资料
     // ---------------------------------------------------------------------
 
+        // TIM DataLine 设备会话（我的手机/电脑/平板）：chatType=8，标题/图标需要专门显示。
+        // peerUid 走 TIM 的 PeerUid.DATALINE_* 常量；万一 TIM 新增设备类型，兜底成「我的设备」。
+        val dataLineKind = when {
+            isTroopAssistant -> 0
+            dataLineKind(peerUid) != 0 -> dataLineKind(peerUid)
+            chatType == 8 -> 4
+            else -> 0
+        }
     /** 读取当前登录账号资料（昵称 / QQ 号 / 头像）。阻塞，需在 IO 线程调用。 */
     fun loadSelfProfile(): UserProfile? {
         if (!isHost) return null
@@ -3938,6 +3966,7 @@ internal object TimBridge {
             val deadline = android.os.SystemClock.uptimeMillis() + 1_200L
             while (android.os.SystemClock.uptimeMillis() < deadline &&
                 (avatarService == null || myUid == null)
+            dataLineKind != 0 -> dataLineTitle(dataLineKind)
             ) {
                 Thread.sleep(120L)
                 ensureServices()
@@ -9816,10 +9845,10 @@ internal object TimBridge {
             ?: buildFallbackChat(chatId)
             ?: return null
         val meta = chatMeta[chatId]
-        val data = if (chat.isGroup) {
-            loadGroupChatInfo(chat, meta, chatId)
-        } else {
-            loadUserChatInfo(chat, meta, chatId)
+        val data = when {
+            chat.dataLineKind != 0 -> loadDataLineChatInfo(chat)
+            chat.isGroup -> loadGroupChatInfo(chat, meta, chatId)
+            else -> loadUserChatInfo(chat, meta, chatId)
         }
         chatInfoCache[chatId] = CachedChatInfo(data, perfUptime())
         Log.i(
@@ -9848,10 +9877,10 @@ internal object TimBridge {
             ?: return null
         if (!ensureServices()) return null
         val meta = chatMeta[chatId]
-        val data = if (chat.isGroup) {
-            loadGroupChatInfo(chat, meta, chatId)
-        } else {
-            loadUserChatInfo(chat, meta, chatId)
+        val data = when {
+            chat.dataLineKind != 0 -> loadDataLineChatInfo(chat)
+            chat.isGroup -> loadGroupChatInfo(chat, meta, chatId)
+            else -> loadUserChatInfo(chat, meta, chatId)
         }
         chatInfoCache[chatId] = CachedChatInfo(data, perfUptime())
         Log.i(

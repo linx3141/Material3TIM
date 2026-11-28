@@ -258,6 +258,7 @@
     <string name="contact_delete">删除好友</string>
     <string name="contact_more_info">更多资料</string>
     <string name="contact_tim_id">TIM 号：%s</string>
+    <string name="contact_dataline_session">设备会话</string>
     <string name="contact_signature_empty">这个人很懒，什么都没有留下</string>
 
     <!-- ========== 编辑资料 ========== -->

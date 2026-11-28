@@ -109,4 +109,18 @@
     <string name="chat_file_downloading">正在下载文件…</string>
     <string name="chat_file_download_failed">文件下载失败</string>
     <string name="chat_file_open_failed">无法打开文件</string>
+    <string name="forward_group_assistant_title">选择群聊</string>
+    <string name="chat_dataline_subtitle">跨设备文件传输</string>
+    <string name="chat_dataline_description">说明</string>
+    <string name="chat_super_emoji_placeholder">[超级表情]</string>
+    <string name="emoji_system_face_title">小黄脸</string>
+    <string name="emoji_super_title">超级表情</string>
+    <string name="emoji_system_face_sent">已发送表情</string>
+    <string name="emoji_system_face_send_failed">表情发送失败</string>
+    <string name="emoji_super_sent">已发送超级表情</string>
+    <string name="emoji_super_send_failed">超级表情发送失败</string>
+    <string name="chat_jump_to_event">跳转到上一个提醒</string>
+    <string name="group_files_search_hint">搜索群文件</string>
+    <string name="group_files_search_empty">没有找到匹配的文件</string>
+    <string name="group_files_search_failed">搜索失败，请重试</string>
 </resources>

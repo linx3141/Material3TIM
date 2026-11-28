@@ -68,6 +68,7 @@ import com.material3tim.data.model.ChatMember
 import com.material3tim.data.repository.LiveChats
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.ui.component.ChatAvatar
+import com.material3tim.ui.component.DataLineAvatar
 import com.material3tim.ui.component.material.ExpressiveAlertDialog
 import com.material3tim.ui.component.material.ExpressiveConfirmDialog
 import com.material3tim.ui.component.material.ExpressiveInputDialog
@@ -551,19 +552,31 @@ private fun ChatInfoHeaderMaterial(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ChatAvatar(
-                name = chat.name,
-                seed = chat.avatarSeed,
-                modifier = if (onAvatarClick != null) {
-                    Modifier.clip(CircleShape).clickable(onClick = onAvatarClick)
-                } else {
-                    Modifier
-                },
-                size = 64.dp,
-                isOnline = chat.isOnline,
-                isGroup = chat.isGroup,
-                avatarPath = chat.avatarPath,
-            )
+            if (chat.dataLineKind != 0) {
+                DataLineAvatar(
+                    kind = chat.dataLineKind,
+                    modifier = if (onAvatarClick != null) {
+                        Modifier.clip(CircleShape).clickable(onClick = onAvatarClick)
+                    } else {
+                        Modifier
+                    },
+                    size = 64.dp,
+                )
+            } else {
+                ChatAvatar(
+                    name = chat.name,
+                    seed = chat.avatarSeed,
+                    modifier = if (onAvatarClick != null) {
+                        Modifier.clip(CircleShape).clickable(onClick = onAvatarClick)
+                    } else {
+                        Modifier
+                    },
+                    size = 64.dp,
+                    isOnline = chat.isOnline,
+                    isGroup = chat.isGroup,
+                    avatarPath = chat.avatarPath,
+                )
+            }
             Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -736,26 +749,33 @@ private fun ChatInfoProfileMaterial(
                 .fillMaxWidth()
                 .padding(16.dp),
         ) {
+            // 设备会话（我的手机/电脑/平板）没有 QQ 号，不显示号码行。
+            if (chat.dataLineKind == 0) {
+                Text(
+                    text = stringResource(
+                        if (chat.isGroup) R.string.chat_info_group_number else R.string.chat_info_qq_number,
+                        timId,
+                    ),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = colorScheme.onSurface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            clipboard.setText(AnnotatedString(timId))
+                            Toast.makeText(context, R.string.chat_info_copied, Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(vertical = 4.dp),
+                )
+                Spacer(Modifier.height(12.dp))
+            }
             Text(
                 text = stringResource(
-                    if (chat.isGroup) R.string.chat_info_group_number else R.string.chat_info_qq_number,
-                    timId,
-                ),
-                style = MaterialTheme.typography.bodyLarge,
-                color = colorScheme.onSurface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable {
-                        clipboard.setText(AnnotatedString(timId))
-                        Toast.makeText(context, R.string.chat_info_copied, Toast.LENGTH_SHORT).show()
-                    }
-                    .padding(vertical = 4.dp),
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = stringResource(
-                    if (chat.isGroup) R.string.chat_info_group_intro else R.string.chat_info_signature,
+                    when {
+                        chat.dataLineKind != 0 -> R.string.chat_dataline_description
+                        chat.isGroup -> R.string.chat_info_group_intro
+                        else -> R.string.chat_info_signature
+                    },
                 ),
                 style = MaterialTheme.typography.labelMedium,
                 color = colorScheme.onSurfaceVariant,

@@ -164,6 +164,8 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.PullToRefresh
+import com.material3tim.ui.component.SuperEmojiAnimation
+import com.material3tim.ui.component.DataLineAvatar
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.rememberPullToRefreshState
@@ -1078,21 +1080,32 @@ private fun ChatAvatarSlotMiuix(
         val hasMeta = message.isMe || message.timeLabel.isNotEmpty()
         // 系统消息/无发送者 uid 的消息不响应点击。
         val avatarClickable = message.type != ChatMessageType.SYSTEM && message.senderUid.isNotBlank()
-        ChatAvatar(
-            name = message.senderName,
-            seed = message.senderSeed,
-            size = 36.dp,
-            avatarPath = message.senderAvatarPath,
-            modifier = sidePadding
-                .padding(bottom = if (hasMeta) ChatAvatarMetaLift else 0.dp)
-                .then(
-                    if (avatarClickable) {
-                        Modifier.clickable { onAvatarClick(message) }
-                    } else {
-                        Modifier
-                    },
-                ),
-        )
+        val dataLineKind = LocalChatDataLineKind.current
+        val avatarModifier = sidePadding
+            .padding(bottom = if (hasMeta) ChatAvatarMetaLift else 0.dp)
+            .then(
+                if (avatarClickable) {
+                    Modifier.clickable { onAvatarClick(message) }
+                } else {
+                    Modifier
+                },
+            )
+        // 设备会话里对方（我的手机/电脑/平板）发来的消息：头像用固定设备图标，而不是首字渐变。
+        if (dataLineKind != 0 && !message.isMe) {
+            DataLineAvatar(
+                kind = dataLineKind,
+                modifier = avatarModifier,
+                size = 36.dp,
+            )
+        } else {
+            ChatAvatar(
+                name = message.senderName,
+                seed = message.senderSeed,
+                size = 36.dp,
+                avatarPath = message.senderAvatarPath,
+                modifier = avatarModifier,
+            )
+        }
     } else {
         Spacer(modifier = sidePadding.then(Modifier.size(36.dp)))
     }
@@ -2486,8 +2499,50 @@ private fun ChatFloatingActionsMiuix(
 
 /** Miuix 浮动圆形按钮（44dp，阴影 + primary 底色，与 M3E 尺寸/间距一致）。 */
 @Composable
-private fun MiuixChatFloatingButton(onClick: () -> Unit, content: @Composable () -> Unit) {
-    Box(
+private fun ChatTopBarTitleWithAvatarMiuix(chat: ChatItem, subtitle: String) {
+    val density = LocalDensity.current
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val barHeight = 64.dp
+    val gapPx = with(density) { 8.dp.roundToPx() }
+    val avatarSizePx = with(density) { 44.dp.roundToPx() }
+    Layout(
+        contents = listOf(
+            {
+                // 与返回按钮同直径（Miuix Glass 顶栏按钮 44dp）。
+                if (chat.dataLineKind != 0) {
+                    DataLineAvatar(kind = chat.dataLineKind, size = 44.dp)
+                } else {
+                    ChatAvatar(
+                        name = chat.name,
+                        seed = chat.avatarSeed,
+                        size = 44.dp,
+                        isOnline = chat.isOnline,
+                        isGroup = chat.isGroup,
+                        avatarPath = chat.avatarPath,
+                    )
+                }
+            },
+            {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = chat.name,
+                        style = MiuixTheme.textStyles.title3,
+                        color = MiuixTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (subtitle.isNotEmpty()) {
+                        Text(
+                            text = subtitle,
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            },
+        ),
         modifier = Modifier
             .size(44.dp)
             .shadow(elevation = 6.dp, shape = CircleShape)

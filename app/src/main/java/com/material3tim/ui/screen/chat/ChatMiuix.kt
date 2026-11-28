@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.sp
 import com.material3tim.R
 import com.material3tim.data.model.ChatItem
 import com.material3tim.ui.component.ChatAvatar
+import com.material3tim.ui.component.DataLineAvatar
 import com.material3tim.ui.component.ScrollToTopOnChange
 import com.material3tim.ui.component.SearchStatus
 import com.material3tim.ui.component.miuix.SearchBarFake
@@ -577,6 +578,11 @@ private fun ChatRowContentMiuix(
             }
             if (chat.id == GroupAssistantChatId) {
                 GroupAssistantAvatarMiuix(modifier = Modifier.padding(end = 10.dp))
+            } else if (chat.dataLineKind != 0) {
+                DataLineAvatar(
+                    kind = chat.dataLineKind,
+                    modifier = Modifier.padding(end = 10.dp),
+                )
             } else {
                 ChatAvatar(
                     name = chat.name,

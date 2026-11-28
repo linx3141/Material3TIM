@@ -87,6 +87,7 @@ import com.material3tim.data.model.ContactItem
 import com.material3tim.data.model.GlobalSearchMessage
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.ui.component.ChatAvatar
+import com.material3tim.ui.component.DataLineAvatar
 import com.material3tim.ui.screen.search.GlobalSearchResultsMaterial
 import com.material3tim.ui.screen.search.GlobalSearchUiState
 import com.material3tim.ui.component.ScrollToTopOnChange
@@ -510,6 +511,8 @@ internal fun ChatListRowMaterial(
             onClick = onClick,
             leadingContent = {
                 if (chat.id == GroupAssistantChatId) {
+                } else if (chat.dataLineKind != 0) {
+                    DataLineAvatar(kind = chat.dataLineKind)
                     GroupAssistantAvatarMaterial()
                 } else {
                     ChatAvatar(

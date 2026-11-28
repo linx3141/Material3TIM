@@ -25,6 +25,7 @@ import com.material3tim.data.model.ChatMember
 import com.material3tim.data.model.ContactDetail
 import com.material3tim.data.model.ContactItem
 import com.material3tim.data.model.GroupMemberRole as ModelGroupMemberRole
+import com.material3tim.data.model.DataLine
 import com.material3tim.data.model.UserProfile
 import com.material3tim.data.repository.ChatRepository
 import com.material3tim.data.repository.LiveProfile
@@ -59,6 +60,8 @@ fun ContactDetailScreen(
 ) {
     val navigator = LocalNavigator.current
     val liveSource = AppDataSources.contactSource
+    // DataLine 设备会话（我的手机/电脑/平板）没有真实 QQ 资料：直接合成设备资料页。
+    val dataLineKind = remember(uid) { DataLine.kindOf(uid) }
     val isChatProfile = chatId.isNotBlank() && (uid.isNotBlank() || uin.isNotBlank())
     var profile by remember(contactId, chatId, uid, uin) { mutableStateOf<UserProfile?>(null) }
     var detail by remember(contactId, isChatProfile) {
@@ -76,6 +79,21 @@ fun ContactDetailScreen(
     LaunchedEffect(contactId, chatId, uid, uin, refreshTick) {
         loading = true
         loadFailed = false
+        if (isChatProfile && dataLineKind != 0) {
+            val title = DataLine.title(dataLineKind)
+            profile = UserProfile(
+                name = title,
+                timId = "",
+                signature = "",
+                avatarSeed = 0,
+                isOnline = false,
+                contact = ContactItem(id = "", name = title, letter = '#'),
+                chatId = chatId,
+            )
+            loading = false
+            loadFailed = false
+            return@LaunchedEffect
+        }
         if (isChatProfile) {
             val loaded = withContext(Dispatchers.IO) {
                 runCatching {
@@ -197,7 +215,8 @@ fun ContactDetailScreen(
     // 不显示「加好友/发消息/删除好友」。
     val selfProfile = profile
     val targetMember: ChatMember? = profile?.targetMember ?: fastTargetMember
-    val isSelf = targetMember?.isMe == true ||
+    val isSelf = dataLineKind != 0 ||
+        targetMember?.isMe == true ||
         (uin.isNotBlank() && LiveProfile.peek()?.timId == uin)
     val isFriend = if (isSelf) true else profile?.isFriend ?: true
     // 群成员资料（群聊里点成员头像进入）不显示「设置/修改备注」；仅好友资料页显示。
@@ -247,6 +266,7 @@ fun ContactDetailScreen(
     when (LocalUiMode.current) {
         UiMode.Material -> ContactDetailMaterial(
             detail = pageDetail,
+            dataLineKind = dataLineKind,
             onBack = { navigator.pop() },
             onSendMessage = onSendMessage,
             isFriend = isFriend,
@@ -269,6 +289,7 @@ fun ContactDetailScreen(
 
         UiMode.Miuix -> ContactDetailMiuix(
             detail = pageDetail,
+            dataLineKind = dataLineKind,
             onBack = { navigator.pop() },
             onSendMessage = onSendMessage,
             isFriend = isFriend,

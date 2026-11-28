@@ -176,6 +176,8 @@ import com.material3tim.ui.component.material.expressiveTopAppBarColors
  * 聊天详情页（Material 3 Expressive 风格）。
  *
  * 结构：紧凑顶栏（返回 / 会话名 + 副标题 / 更多 + 单聊通话入口）
+import com.material3tim.ui.component.SuperEmojiAnimation
+import com.material3tim.ui.component.DataLineAvatar
  * + 底部锚定的反向消息列表（时间分隔、系统消息、六种气泡，同一发送者连续消息按
  *   M3 Expressive 分段圆角成组）
  * + 输入栏（表情面板在输入栏上方、附件面板在输入栏下方，二者互斥）
@@ -614,7 +616,26 @@ internal fun ChatDetailMaterial(
                 )
             } else {
             TopAppBar(
-                title = { ChatTopBarTitleMaterial(chat) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (showTopBarAvatar) {
+                            if (chat.dataLineKind != 0) {
+                                DataLineAvatar(kind = chat.dataLineKind, size = 40.dp)
+                            } else {
+                                ChatAvatar(
+                                    name = chat.name,
+                                    seed = chat.avatarSeed,
+                                    size = 40.dp,
+                                    isOnline = chat.isOnline,
+                                    isGroup = chat.isGroup,
+                                    avatarPath = chat.avatarPath,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        ChatTopBarTitleMaterial(chat)
+                    }
+                },
                 navigationIcon = {
                     TopBarBackButton(
                         onClick = onBack,
@@ -1053,21 +1074,32 @@ private fun ChatAvatarSlotMaterial(
         val hasMeta = message.isMe || message.timeLabel.isNotEmpty()
         // 系统消息/无发送者 uid 的消息不响应点击。
         val avatarClickable = message.type != ChatMessageType.SYSTEM && message.senderUid.isNotBlank()
-        ChatAvatar(
-            name = message.senderName,
-            seed = message.senderSeed,
-            size = 36.dp,
-            avatarPath = message.senderAvatarPath,
-            modifier = sidePadding
-                .padding(bottom = if (hasMeta) ChatAvatarMetaLift else 0.dp)
-                .then(
-                    if (avatarClickable) {
-                        Modifier.clickable { onAvatarClick(message) }
-                    } else {
-                        Modifier
-                    },
-                ),
-        )
+        val dataLineKind = LocalChatDataLineKind.current
+        val avatarModifier = sidePadding
+            .padding(bottom = if (hasMeta) ChatAvatarMetaLift else 0.dp)
+            .then(
+                if (avatarClickable) {
+                    Modifier.clickable { onAvatarClick(message) }
+                } else {
+                    Modifier
+                },
+            )
+        // 设备会话里对方（我的手机/电脑/平板）发来的消息：头像用固定设备图标，而不是首字渐变。
+        if (dataLineKind != 0 && !message.isMe) {
+            DataLineAvatar(
+                kind = dataLineKind,
+                modifier = avatarModifier,
+                size = 36.dp,
+            )
+        } else {
+            ChatAvatar(
+                name = message.senderName,
+                seed = message.senderSeed,
+                size = 36.dp,
+                avatarPath = message.senderAvatarPath,
+                modifier = avatarModifier,
+            )
+        }
     } else {
         Spacer(modifier = sidePadding.then(Modifier.size(36.dp)))
     }

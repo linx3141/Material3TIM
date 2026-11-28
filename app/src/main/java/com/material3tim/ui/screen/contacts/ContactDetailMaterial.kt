@@ -68,9 +68,11 @@ import androidx.compose.ui.unit.dp
 import com.material3tim.R
 import com.material3tim.data.model.ChatMember
 import com.material3tim.data.model.ContactDetail
+import com.material3tim.data.model.DataLine
 import com.material3tim.data.repository.LiveChats
 import com.material3tim.data.source.AppDataSources
 import com.material3tim.ui.component.ChatAvatar
+import com.material3tim.ui.component.DataLineAvatar
 import com.material3tim.ui.component.material.ExpressiveConfirmDialog
 import com.material3tim.ui.component.material.ExpressiveInputDialog
 import com.material3tim.ui.component.material.ExpressiveScaffold
@@ -94,6 +96,7 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun ContactDetailMaterial(
     detail: ContactDetail,
+    dataLineKind: Int = 0,
     onBack: () -> Unit,
     onSendMessage: () -> Unit,
     isFriend: Boolean = true,
@@ -191,6 +194,7 @@ internal fun ContactDetailMaterial(
             item(key = "header") {
                 ContactDetailHeaderMaterial(
                     detail = detail,
+                    dataLineKind = dataLineKind,
                     loading = isProfileLoading,
                     loadFailed = isProfileLoadFailed,
                 )
@@ -495,6 +499,7 @@ internal fun ContactDetailMaterial(
 @Composable
 private fun ContactDetailHeaderMaterial(
     detail: ContactDetail,
+    dataLineKind: Int = 0,
     loading: Boolean = false,
     loadFailed: Boolean = false,
 ) {
@@ -519,13 +524,17 @@ private fun ContactDetailHeaderMaterial(
                     ContainedLoadingIndicator(modifier = Modifier.fillMaxSize())
                 }
             } else {
-                ChatAvatar(
-                    name = contact.name,
-                    seed = contact.avatarSeed,
-                    size = 96.dp,
-                    isOnline = contact.isOnline,
-                    avatarPath = contact.avatarPath,
-                )
+                if (dataLineKind != 0) {
+                    DataLineAvatar(kind = dataLineKind, size = 96.dp)
+                } else {
+                    ChatAvatar(
+                        name = contact.name,
+                        seed = contact.avatarSeed,
+                        size = 96.dp,
+                        isOnline = contact.isOnline,
+                        avatarPath = contact.avatarPath,
+                    )
+                }
             }
             Spacer(Modifier.height(14.dp))
             Text(
@@ -543,6 +552,7 @@ private fun ContactDetailHeaderMaterial(
             Spacer(Modifier.height(4.dp))
             Text(
                 text = when {
+                    dataLineKind != 0 -> stringResource(R.string.contact_dataline_session)
                     loading -> loadingText
                     loadFailed && detail.timId.isBlank() -> failedText
                     else -> stringResource(R.string.contact_tim_id, detail.timId.ifBlank { "—" })
@@ -561,6 +571,7 @@ private fun ContactDetailHeaderMaterial(
             Spacer(Modifier.height(8.dp))
             Text(
                 text = when {
+                    dataLineKind != 0 -> DataLine.DESCRIPTION
                     loading -> loadingText
                     loadFailed && contact.signature.isBlank() -> failedText
                     else -> contact.signature.ifBlank { stringResource(R.string.contact_signature_empty) }
